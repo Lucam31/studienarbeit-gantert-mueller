@@ -14,8 +14,6 @@ class WebSocket(QObject):
         QObject.__init__(self)
         self.logger = Logger("WebSocket")
         self.port = 50000
-        # self.ip = socket.gethostbyname(socket.gethostname())
-        # self.ip = "192.168.3.222"
         self.history = list()
         self.server = QWebSocketServer('WebSocket', QWebSocketServer.NonSecureMode)
         self.websockets = dict()
@@ -44,11 +42,30 @@ class WebSocket(QObject):
     ## Handle messages received from clients
     # @param message: The message received from the client
     # @description: This function is called when a message is received from a client.
-    # It stores the message in a buffer and emits a signal to notify the main application.
+    # It processes the JSON message and emits a signal to notify the main application.
     def handleClientMessage(self, message):
-        #print(f"Received message from client: {message}")
-        self.logger.info(f"Received message from client: {message}")
-        self.SignalMessageReceived.emit(message)
+        try:
+            # Parse the JSON message
+            data = json.loads(message)
+            self.logger.info(f"Received JSON message: {data}")
+
+            # Extract ID and payload
+            message_id = data.get("id", "unknown")
+            payload = data.get("payload", {})
+
+            self.logger.info(f"Message ID: {message_id}, Payload: {payload}")
+
+            # Process the payload (custom logic can be added here)
+            # Example: Log the payload keys
+            for key, value in payload.items():
+                self.logger.info(f"Payload Key: {key}, Value: {value}")
+
+            # Emit the original message
+            self.SignalMessageReceived.emit(message)
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Failed to decode JSON message: {message}. Error: {e}")
+        except Exception as e:
+            self.logger.error(f"Unexpected error while processing message: {message}. Error: {e}")
         
     ## Handle new client connections
     def newConnection(self):
