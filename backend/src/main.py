@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Response
+import RPi.GPIO as GPIO
 from fastapi.middleware.cors import CORSMiddleware
 from PySide6.QtCore import QObject, Signal, QTimer, QCoreApplication
 from websocket.server import WebSocket
@@ -12,11 +13,23 @@ import os
 import subprocess
 import signal
 
+import hardware.controller as controller
+import hardware.drivers as drivers
+
 class MainApp(QObject):
     def __init__(self):
         super().__init__()
-        self.websocket = WebSocket()
-        self.websocket.SignalMessageReceived.connect(self.handle_websocket_message)
+        self.drivers = drivers.Drivers()
+        self.controller = controller.Controller(self.drivers)
+        self.test_routine()
+        # self.websocket = WebSocket()
+        # self.websocket.SignalMessageReceived.connect(self.handle_websocket_message)
+
+    def test_routine(self):
+        while True: # Run forever
+            if GPIO.input(10) == GPIO.HIGH:
+                print("Button was pushed!")
+                # self.controller.test()
 
     def handle_websocket_message(self, message):
         print(f"Message received from WebSocket: {message}")
@@ -24,7 +37,7 @@ class MainApp(QObject):
 
     def handle_close_event(self, signal_received, frame):
         print("\nCtrl+C detected. Closing application...")
-        self.websocket.stop_server()
+        # self.websocket.stop_server()
         app.quit()
 
 # app = FastAPI(title="PiCam V3 API")
@@ -70,7 +83,7 @@ class MainApp(QObject):
 if __name__ == "__main__":
     app = QCoreApplication([])
     main_app = MainApp()
-    main_app.websocket.start_server(50000)
+    # main_app.websocket.start_server(50000)
 
     signal.signal(signal.SIGINT, main_app.handle_close_event)
 
