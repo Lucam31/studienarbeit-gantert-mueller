@@ -1,16 +1,6 @@
-from fastapi import FastAPI, Response
-import RPi.GPIO as GPIO
-from fastapi.middleware.cors import CORSMiddleware
 from PySide6.QtCore import QObject, Signal, QTimer, QCoreApplication
 from websocket.server import WebSocket
-import json
 from utils.logger import Logger
-try:
-    from picamera2 import Picamera2
-except:
-    print("Picamera2 library not found. Please install it to use the camera features.")
-import os
-import subprocess
 import signal
 
 import hardware.controller as controller
@@ -26,8 +16,12 @@ class MainApp(QObject):
         # self.websocket.SignalMessageReceived.connect(self.handle_websocket_message)
 
     def test_routine(self):
+        # Use Drivers abstraction (gpiozero+lgpio) for Raspberry Pi 5 compatibility.
+        button_pin = 10  # BCM by default; call initialize(mode=drivers.BOARD) to use physical pin numbers
+        self.drivers.initialize(mode=drivers.BCM)
+        self.drivers.setup_input(button_pin, pull=None)
         while True: # Run forever
-            if GPIO.input(10) == GPIO.HIGH:
+            if self.drivers.read(button_pin):
                 print("Button was pushed!")
                 # self.controller.test()
 
@@ -40,45 +34,7 @@ class MainApp(QObject):
         # self.websocket.stop_server()
         app.quit()
 
-# app = FastAPI(title="PiCam V3 API")
 
-# # CORS Setup: Erlaubt deinem React-Frontend den Zugriff
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"], 
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# # Kamera-Initialisierung (Singleton-Style)
-# picam2 = Picamera2()
-# config = picam2.create_video_configuration()
-# picam2.configure(config)
-# picam2.start()
-
-# @app.get("/stream")
-# async def video_stream():
-#     """MJPEG Video Stream Endpunkt"""
-#     def generate():
-#         while True:
-#             frame = picam2.capture_file(format='jpeg', output_type='bytes')
-#             yield (b'--frame\r\n'
-#                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-    
-#     return Response(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
-
-# @app.get("/status")
-# async def get_status():
-#     """Gibt die CPU Temperatur zurück"""
-#     temp_output = subprocess.check_output(["vcgencmd", "measure_temp"]).decode("utf-8")
-#     temp = temp_output.replace("temp=", "").replace("'C\n", "")
-#     return {"temp": temp, "camera": "online"}
-
-# @app.post("/focus")
-# async def trigger_focus():
-#     """Löst den Autofokus der Cam V3 aus"""
-#     picam2.autofocus_cycle()
-#     return {"status": "focused"}
 
 if __name__ == "__main__":
     app = QCoreApplication([])

@@ -1,40 +1,156 @@
-import RPi.GPIO as GPIO
+from __future__ import annotations
+
+from typing import Any
+
+
+# Lazily imported in `_ensure_backend()` so this module can be imported
+# on non-Raspberry-Pi dev machines without optional dependencies installed.
+Device: Any = None
+DigitalInputDevice: Any = None
+DigitalOutputDevice: Any = None
+PWMOutputDevice: Any = None
+LGPIOFactory: Any = None
+
+
+BCM = 11
+BOARD = 10
+
+
+# Raspberry Pi 40-pin header mapping (physical pin -> BCM GPIO number).
+# Only pins which are actual GPIOs are included; power/ground pins are omitted.
+_BOARD_TO_BCM: dict[int, int] = {
+    3: 2,
+    5: 3,
+    7: 4,
+    8: 14,
+    10: 15,
+    11: 17,
+    12: 18,
+    13: 27,
+    15: 22,
+    16: 23,
+    18: 24,
+    19: 10,
+    21: 9,
+    22: 25,
+    23: 11,
+    24: 8,
+    26: 7,
+    27: 0,
+    28: 1,
+    29: 5,
+    31: 6,
+    32: 12,
+    33: 13,
+    35: 19,
+    36: 16,
+    37: 26,
+    38: 20,
+    40: 21,
+}
+
 
 class Drivers:
     def __init__(self):
         self.drivers = {}
+        self._mode = BCM
+
+    def _ensure_backend(self) -> None:
+        global Device, DigitalInputDevice, DigitalOutputDevice, PWMOutputDevice, LGPIOFactory
+
+        if Device is None or LGPIOFactory is None:
+            try:
+                import importlib
+
+                gpiozero = importlib.import_module("gpiozero")
+                pins_lgpio = importlib.import_module("gpiozero.pins.lgpio")
+            except ImportError as exc:  # pragma: no cover
+                raise RuntimeError(
+                    "gpiozero/lgpio backend is not available. On Raspberry Pi OS install: "
+                    "`sudo apt install python3-gpiozero python3-lgpio` "
+                    "(or install `gpiozero` and `lgpio` via pip)."
+                ) from exc
+
+            Device = gpiozero.Device
+            DigitalInputDevice = gpiozero.DigitalInputDevice
+            DigitalOutputDevice = gpiozero.DigitalOutputDevice
+            PWMOutputDevice = gpiozero.PWMOutputDevice
+            LGPIOFactory = pins_lgpio.LGPIOFactory
+
+        # Force lgpio backend for Raspberry Pi 5 compatibility.
+        # This is safe to call multiple times.
+        if not isinstance(getattr(Device, "pin_factory", None), LGPIOFactory):
+            Device.pin_factory = LGPIOFactory()
 
     # Driver sind sehr low level und machen nur direkte Ansteuerung der Hardware
-    def initialize(self, mode: int = GPIO.BCM, disable_warnings: bool = True) -> None:
-        GPIO.setwarnings(not disable_warnings)
-        GPIO.setmode(mode)
+    def initialize(self, mode: int = BCM, disable_warnings: bool = True) -> None:
+        self._ensure_backend()
+        if mode not in (BCM, BOARD):
+            raise ValueError("mode must be BCM or BOARD")
+
+        # gpiozero always operates on BCM numbering; BOARD is supported by mapping.
+        self._mode = mode
+
+        # `disable_warnings` is kept for API compatibility; gpiozero does not use it.
+        _ = disable_warnings
 
     def setup_output(self, pin: int, initial: bool = False) -> None:
-        GPIO.setup(pin, GPIO.OUT, initial=GPIO.HIGH if initial else GPIO.LOW)
-        self.drivers[pin] = {"mode": "out", "value": initial}
+        self._ensure_backend()
+        bcm_pin = self._to_bcm(pin)
+        self._close_device(pin)
+        device = DigitalOutputDevice(bcm_pin, initial_value=bool(initial))
+        self.drivers[pin] = {
+            "mode": "out",
+            "value": bool(initial),
+            "device": device,
+            "bcm_pin": bcm_pin,
+        }
 
     def setup_input(self, pin: int, pull: str | None = None) -> None:
-        pull_map = {
-            "up": GPIO.PUD_UP,
-            "down": GPIO.PUD_DOWN,
-            None: GPIO.PUD_OFF,
+        self._ensure_backend()
+        bcm_pin = self._to_bcm(pin)
+        pull_map: dict[str | None, bool | None] = {
+            "up": True,
+            "down": False,
+            None: None,
         }
         if pull not in pull_map:
             raise ValueError("pull must be one of: 'up', 'down', None")
 
-        GPIO.setup(pin, GPIO.IN, pull_up_down=pull_map[pull])
-        self.drivers[pin] = {"mode": "in", "pull": pull}
+        self._close_device(pin)
+        # Match RPi.GPIO semantics: `read()` returns True when the physical pin is HIGH.
+        device = DigitalInputDevice(bcm_pin, pull_up=pull_map[pull], active_state=True)
+        self.drivers[pin] = {"mode": "in", "pull": pull, "device": device, "bcm_pin": bcm_pin}
 
     def write(self, pin: int, value: bool) -> None:
         if pin not in self.drivers or self.drivers[pin]["mode"] != "out":
             raise RuntimeError(f"Pin {pin} is not configured as output")
-        GPIO.output(pin, GPIO.HIGH if value else GPIO.LOW)
-        self.drivers[pin]["value"] = value
+
+        cfg = self.drivers[pin]
+        if "pwm" in cfg:
+            pwm = cfg["pwm"]
+            duty = 100.0 if value else 0.0
+            pwm.value = duty / 100.0
+            cfg["duty_cycle"] = duty
+            cfg["value"] = bool(value)
+        else:
+            device = cfg["device"]
+            device.value = bool(value)
+            cfg["value"] = bool(value)
 
     def read(self, pin: int) -> bool:
         if pin not in self.drivers:
             raise RuntimeError(f"Pin {pin} is not configured")
-        return GPIO.input(pin) == GPIO.HIGH
+
+        cfg = self.drivers[pin]
+        if "pwm" in cfg:
+            pwm = cfg["pwm"]
+            return pwm.value > 0.0
+
+        device = cfg.get("device")
+        if device is None:
+            raise RuntimeError(f"Pin {pin} has no device configured")
+        return bool(device.value)
 
     def toggle(self, pin: int) -> bool:
         current = self.read(pin)
@@ -43,43 +159,108 @@ class Drivers:
         return new_value
 
     def setup_pwm(self, pin: int, frequency: float, duty_cycle: float = 0.0) -> None:
+        self._ensure_backend()
+        bcm_pin = self._to_bcm(pin)
+
         if pin not in self.drivers:
             self.setup_output(pin, initial=False)
-        pwm = GPIO.PWM(pin, frequency)
-        pwm.start(duty_cycle)
-        self.drivers[pin]["pwm"] = pwm
-        self.drivers[pin]["frequency"] = frequency
-        self.drivers[pin]["duty_cycle"] = duty_cycle
+        if self.drivers[pin]["mode"] != "out":
+            raise RuntimeError(f"Pin {pin} is not configured as output")
+
+        cfg = self.drivers[pin]
+        if "pwm" in cfg:
+            # Re-create to match RPi.GPIO semantics (fresh PWM instance).
+            self.stop_pwm(pin)
+
+        self._close_device(pin)
+
+        duty = float(duty_cycle)
+        if duty < 0.0:
+            duty = 0.0
+        if duty > 100.0:
+            duty = 100.0
+
+        pwm = PWMOutputDevice(bcm_pin, frequency=float(frequency), initial_value=duty / 100.0)
+        cfg["device"] = pwm
+        cfg["pwm"] = pwm
+        cfg["frequency"] = float(frequency)
+        cfg["duty_cycle"] = duty
+        cfg["value"] = duty > 0.0
+        cfg["bcm_pin"] = bcm_pin
 
     def set_pwm_duty_cycle(self, pin: int, duty_cycle: float) -> None:
         pwm = self._get_pwm(pin)
-        pwm.ChangeDutyCycle(duty_cycle)
-        self.drivers[pin]["duty_cycle"] = duty_cycle
+        duty = float(duty_cycle)
+        if duty < 0.0:
+            duty = 0.0
+        if duty > 100.0:
+            duty = 100.0
+        pwm.value = duty / 100.0
+        self.drivers[pin]["duty_cycle"] = duty
+        self.drivers[pin]["value"] = duty > 0.0
 
     def set_pwm_frequency(self, pin: int, frequency: float) -> None:
         pwm = self._get_pwm(pin)
-        pwm.ChangeFrequency(frequency)
-        self.drivers[pin]["frequency"] = frequency
+        pwm.frequency = float(frequency)
+        self.drivers[pin]["frequency"] = float(frequency)
 
     def stop_pwm(self, pin: int) -> None:
         pwm = self._get_pwm(pin)
-        pwm.stop()
-        self.drivers[pin].pop("pwm", None)
+        cfg = self.drivers[pin]
+        was_on = pwm.value > 0.0
+        pwm.close()
+        cfg.pop("pwm", None)
+
+        # Re-create a plain output device so `write()` keeps working.
+        bcm_pin = cfg.get("bcm_pin", self._to_bcm(pin))
+        cfg["value"] = bool(was_on)
+        cfg["device"] = DigitalOutputDevice(bcm_pin, initial_value=bool(was_on))
+
+    def _to_bcm(self, pin: int) -> int:
+        if self._mode == BCM:
+            return int(pin)
+        if self._mode == BOARD:
+            try:
+                return _BOARD_TO_BCM[int(pin)]
+            except KeyError as exc:
+                raise ValueError(
+                    f"BOARD pin {pin} is not a usable GPIO pin (power/ground or unsupported)."
+                ) from exc
+
+        # Should never happen due to validation in initialize()
+        raise ValueError("Invalid pin numbering mode")
 
     def cleanup_pin(self, pin: int) -> None:
-        if pin in self.drivers and "pwm" in self.drivers[pin]:
-            self.drivers[pin]["pwm"].stop()
-        GPIO.cleanup(pin)
-        self.drivers.pop(pin, None)
+        if pin in self.drivers:
+            self._close_device(pin)
+            self.drivers.pop(pin, None)
 
     def cleanup(self) -> None:
-        for pin, cfg in list(self.drivers.items()):
-            if "pwm" in cfg:
-                cfg["pwm"].stop()
-        GPIO.cleanup()
+        for pin in list(self.drivers.keys()):
+            self.cleanup_pin(pin)
         self.drivers.clear()
 
-    def _get_pwm(self, pin: int):
+    def _get_pwm(self, pin: int) -> Any:
         if pin not in self.drivers or "pwm" not in self.drivers[pin]:
             raise RuntimeError(f"No PWM configured on pin {pin}")
         return self.drivers[pin]["pwm"]
+
+    def _close_device(self, pin: int) -> None:
+        cfg = self.drivers.get(pin)
+        if not cfg:
+            return
+
+        device = cfg.pop("device", None)
+        if device is not None:
+            try:
+                device.close()
+            except Exception:
+                pass
+
+        pwm = cfg.get("pwm")
+        if pwm is not None:
+            try:
+                pwm.close()
+            except Exception:
+                pass
+            cfg.pop("pwm", None)
