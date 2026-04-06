@@ -1,3 +1,5 @@
+import time
+
 from PySide6.QtCore import QObject, Signal, QTimer, QCoreApplication
 from websocket.server import WebSocket
 from utils.logger import Logger
@@ -17,13 +19,18 @@ class MainApp(QObject):
 
     def test_routine(self):
         # Use Drivers abstraction (gpiozero+lgpio) for Raspberry Pi 5 compatibility.
-        button_pin = 10  # BCM by default; call initialize(mode=drivers.BOARD) to use physical pin numbers
-        self.drivers.initialize(mode=drivers.BCM)
-        self.drivers.setup_input(button_pin, pull=None)
+        button_pin = 17  # BCM by default; call initialize(mode=drivers.BOARD) to use physical pin numbers
+        self.drivers.initialize()
+        self.drivers.setup_input(button_pin, pull="down")
+        print("Test routine started")
+        last_button_state = False
         while True: # Run forever
-            if self.drivers.read(button_pin):
+            button_state = self.drivers.read(button_pin)
+            if button_state and not last_button_state:
                 print("Button was pushed!")
-                # self.controller.test()
+                self.controller.test()
+            last_button_state = button_state
+            time.sleep(0.01)  # Sleep to avoid busy waiting
 
     def handle_websocket_message(self, message):
         print(f"Message received from WebSocket: {message}")

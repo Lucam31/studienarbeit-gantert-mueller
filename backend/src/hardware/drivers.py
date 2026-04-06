@@ -13,7 +13,6 @@ LGPIOFactory: Any = None
 
 
 BCM = 11
-BOARD = 10
 
 
 # Raspberry Pi 40-pin header mapping (physical pin -> BCM GPIO number).
@@ -83,44 +82,41 @@ class Drivers:
             Device.pin_factory = LGPIOFactory()
 
     # Driver sind sehr low level und machen nur direkte Ansteuerung der Hardware
-    def initialize(self, mode: int = BCM, disable_warnings: bool = True) -> None:
+    def initialize(self, disable_warnings: bool = True) -> None:
         self._ensure_backend()
-        if mode not in (BCM, BOARD):
-            raise ValueError("mode must be BCM or BOARD")
-
         # gpiozero always operates on BCM numbering; BOARD is supported by mapping.
-        self._mode = mode
+        self._mode = BCM
 
         # `disable_warnings` is kept for API compatibility; gpiozero does not use it.
         _ = disable_warnings
 
     def setup_output(self, pin: int, initial: bool = False) -> None:
         self._ensure_backend()
-        bcm_pin = self._to_bcm(pin)
         self._close_device(pin)
-        device = DigitalOutputDevice(bcm_pin, initial_value=bool(initial))
+        device = DigitalOutputDevice(pin, initial_value=bool(initial))
         self.drivers[pin] = {
             "mode": "out",
             "value": bool(initial),
             "device": device,
-            "bcm_pin": bcm_pin,
+            "pin": pin,
         }
 
     def setup_input(self, pin: int, pull: str | None = None) -> None:
         self._ensure_backend()
-        bcm_pin = self._to_bcm(pin)
         pull_map: dict[str | None, bool | None] = {
             "up": True,
             "down": False,
             None: None,
         }
+    
         if pull not in pull_map:
             raise ValueError("pull must be one of: 'up', 'down', None")
 
         self._close_device(pin)
-        # Match RPi.GPIO semantics: `read()` returns True when the physical pin is HIGH.
-        device = DigitalInputDevice(bcm_pin, pull_up=pull_map[pull], active_state=True)
-        self.drivers[pin] = {"mode": "in", "pull": pull, "device": device, "bcm_pin": bcm_pin}
+        # With pull-up/down configured, gpiozero requires active_state=None.
+        # `device.value` then reflects electrical HIGH/LOW directly.
+        device = DigitalInputDevice(pin, pull_up=pull_map[pull])
+        self.drivers[pin] = {"mode": "in", "pull": pull, "device": device, "pin": pin}
 
     def write(self, pin: int, value: bool) -> None:
         if pin not in self.drivers or self.drivers[pin]["mode"] != "out":
@@ -139,6 +135,7 @@ class Drivers:
             cfg["value"] = bool(value)
 
     def read(self, pin: int) -> bool:
+        #print("Reading pin {}...".format(pin))
         if pin not in self.drivers:
             raise RuntimeError(f"Pin {pin} is not configured")
 
@@ -148,6 +145,7 @@ class Drivers:
             return pwm.value > 0.0
 
         device = cfg.get("device")
+        #print("Device for pin {}: {}".format(pin, device))
         if device is None:
             raise RuntimeError(f"Pin {pin} has no device configured")
         return bool(device.value)
@@ -160,8 +158,7 @@ class Drivers:
 
     def setup_pwm(self, pin: int, frequency: float, duty_cycle: float = 0.0) -> None:
         self._ensure_backend()
-        bcm_pin = self._to_bcm(pin)
-
+        
         if pin not in self.drivers:
             self.setup_output(pin, initial=False)
         if self.drivers[pin]["mode"] != "out":
@@ -180,13 +177,13 @@ class Drivers:
         if duty > 100.0:
             duty = 100.0
 
-        pwm = PWMOutputDevice(bcm_pin, frequency=float(frequency), initial_value=duty / 100.0)
+        pwm = PWMOutputDevice(pin, frequency=float(frequency), initial_value=duty / 100.0)
         cfg["device"] = pwm
         cfg["pwm"] = pwm
         cfg["frequency"] = float(frequency)
         cfg["duty_cycle"] = duty
         cfg["value"] = duty > 0.0
-        cfg["bcm_pin"] = bcm_pin
+        cfg["pin"] = pin
 
     def set_pwm_duty_cycle(self, pin: int, duty_cycle: float) -> None:
         pwm = self._get_pwm(pin)
@@ -212,23 +209,10 @@ class Drivers:
         cfg.pop("pwm", None)
 
         # Re-create a plain output device so `write()` keeps working.
-        bcm_pin = cfg.get("bcm_pin", self._to_bcm(pin))
+        pin = cfg.get("pin", pin)
         cfg["value"] = bool(was_on)
-        cfg["device"] = DigitalOutputDevice(bcm_pin, initial_value=bool(was_on))
+        cfg["device"] = DigitalOutputDevice(pin, initial_value=bool(was_on))
 
-    def _to_bcm(self, pin: int) -> int:
-        if self._mode == BCM:
-            return int(pin)
-        if self._mode == BOARD:
-            try:
-                return _BOARD_TO_BCM[int(pin)]
-            except KeyError as exc:
-                raise ValueError(
-                    f"BOARD pin {pin} is not a usable GPIO pin (power/ground or unsupported)."
-                ) from exc
-
-        # Should never happen due to validation in initialize()
-        raise ValueError("Invalid pin numbering mode")
 
     def cleanup_pin(self, pin: int) -> None:
         if pin in self.drivers:
