@@ -248,3 +248,19 @@ class Drivers:
             except Exception:
                 pass
             cfg.pop("pwm", None)
+
+    # keine ahnung ob der scheiß mit gpiozero geht
+    def add_event_detect(self, pin: int, edge: str, callback: Any) -> None:
+        if pin not in self.drivers or self.drivers[pin]["mode"] != "in":
+            raise RuntimeError(f"Pin {pin} is not configured as input")
+
+        device = self.drivers[pin]["device"]
+        if edge == "rising":
+            device.when_activated = callback
+        elif edge == "falling":
+            device.when_deactivated = callback
+        elif edge == "both":
+            device.when_activated = callback
+            device.when_deactivated = callback
+        else:
+            raise ValueError("edge must be one of: 'rising', 'falling', 'both'")
