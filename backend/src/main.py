@@ -15,16 +15,16 @@ class MainApp(QObject):
         self.controller = controller.Controller(self.drivers)
         self.emergency_stop_active = False
         # self.test_routine()
-        self.websocket = WebSocket()
-        self.websocket.SignalMessageReceived.connect(self.handle_websocket_message)
-        self.websocket.start_server(50000)
+        # self.websocket = WebSocket()
+        # self.websocket.SignalMessageReceived.connect(self.handle_websocket_message)
+        # self.websocket.start_server(50000)
         timer = QTimer(self)
         timer.timeout.connect(self.emergency_stop)
-        timer.start(500)  # Call emergency_stop every 500 ms
+        # timer.start(500)  # Call emergency_stop every 500 ms
 
     def test_routine(self):
         # Use Drivers abstraction (gpiozero+lgpio) for Raspberry Pi 5 compatibility.
-        button_pin = 17  # BCM by default; call initialize(mode=drivers.BOARD) to use physical pin numbers
+        button_pin = 26  # BCM by default; call initialize(mode=drivers.BOARD) to use physical pin numbers
         self.drivers.initialize()
         self.drivers.setup_input(button_pin, pull="down")
         print("Test routine started")
@@ -71,7 +71,7 @@ class MainApp(QObject):
     # @description: This function is called when a close event is triggered (e.g., when Ctrl+C is pressed in the console). It performs cleanup operations, such as stopping the WebSocket server and quitting the application gracefully.
     def handle_close_event(self, signal_received, frame) -> None:
         print("\nCtrl+C detected. Closing application...")
-        self.websocket.stop_server()
+        # self.websocket.stop_server()
         app.quit()
 
 
@@ -80,6 +80,7 @@ class MainApp(QObject):
     ## Function to perform an emergency stop
     # @description: This function is called periodically by a timer to check if an emergency stop condition is met (e.g., if the calculated braking distance plus a safety margin is greater than the distance to an obstacle). If the condition is met, it stops the vehicle and activates the emergency stop state.
     def emergency_stop(self) -> None:
+        print("Emergency stop check...")
         speed = self.controller.get_current_speed()
         break_distance = (speed/10) * (speed/10) * 0.5
         # if car is sliding but wheels are not turning it thinks the car stopped
