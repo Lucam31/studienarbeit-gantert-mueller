@@ -208,3 +208,8 @@ __marimo__/
 
 # MacOS specific files
 .DS_Store
+
+/mediamtx/mediamtx
+/mediamtx/LICENSE
+/mediamtx/mediamtx_v1.16.0_linux_arm64.tar.gz
+/mediamtx/mediamtx.yml
