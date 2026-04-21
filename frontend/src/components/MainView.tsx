@@ -78,7 +78,7 @@ export default function MainView() {
 
   useEffect(() => {
     readerRef.current = new WebRTCReader({
-      url: "http://192.168.178.190:8889/cam/whep",
+      url: "http://192.168.178.81:8889/cam/whep",
       onError: (err: Error) => {
         console.error("WebRTC Error:", err);
       },
