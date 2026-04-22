@@ -19,7 +19,25 @@ class WebSocket(QObject):
         self.sendTimer = QTimer()
         self.sendTimer.timeout.connect(self.update)
         self.sendTimer.start(100)
-        self.address = QHostAddress.Any#QHostAddress("192.168.3.200")
+        # Bind to all IPv4 interfaces by default so other devices on the LAN can connect.
+        # (Connecting clients must still use this machine's LAN IP, not 0.0.0.0/127.0.0.1.)
+        self.address = QHostAddress(QHostAddress.AnyIPv4)  # or QHostAddress("192.168.x.y")
+
+    def _guess_primary_ipv4(self) -> str | None:
+        """Best-effort guess of the LAN IP other devices should connect to."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                # Doesn't send packets; used to select the outbound interface.
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+            finally:
+                s.close()
+            if ip and ip != "127.0.0.1":
+                return ip
+            return None
+        except Exception:
+            return None
 
     ## Update function to send new messages to clients
     # @description: This function is called periodically by a timer. It checks if there are new messages in the history and sends them to the clients. Each client has an index in the history, which is updated after sending messages.
@@ -93,19 +111,35 @@ class WebSocket(QObject):
     def start_server(self, port: int = 50000) -> bool:
         self.port = port
         triedPorts = 0
-        # while(False == self.server.listen(QHostAddress.Any, port=self.port)):
-        # self.logger.info(f'Trying to start WebSocket server on address {self.address.toString()}...')
-        while not self.server.listen(self.address, port=self.port):
+
+        listen_address = self.address
+        if not isinstance(listen_address, QHostAddress):
+            listen_address = QHostAddress(listen_address)
+
+        while not self.server.listen(listen_address, port=self.port):
             if triedPorts > 10:
-                self.logger.error(f'Could not open websocket on port {self.port}. Giving up.')
+                self.logger.error(
+                    f'Could not open websocket on {listen_address.toString()}:{self.port}. '
+                    f'Qt error: {self.server.errorString()}. Giving up.'
+                )
                 return False
             else:
-                self.logger.error(f'Could not open websocket on port {self.port}. Trying next port...')
+                self.logger.error(
+                    f'Could not open websocket on {listen_address.toString()}:{self.port}. '
+                    f'Qt error: {self.server.errorString()}. Trying next port...'
+                )
                 self.port += 1
                 triedPorts += 1
         self.server.newConnection.connect(self.newConnection)
-        #print(f"WebSocket server started on port {self.port}\nServer is reachable at ws://127.0.0.1:{self.port}")
-        # self.logger.info(f'WebSocket server started on port {self.port}. Server is reachable at ws://{self.address.toString()}:{self.port}')
+        bound_address = self.server.serverAddress().toString()
+        bound_port = self.server.serverPort()
+        self.logger.info(f'WebSocket server listening on {bound_address}:{bound_port}')
+
+        # Helpful connection hints
+        primary_ip = self._guess_primary_ipv4()
+        if primary_ip:
+            self.logger.info(f'From another device, connect to: ws://{primary_ip}:{bound_port}')
+        self.logger.info(f'From this machine, connect to: ws://127.0.0.1:{bound_port}')
         return True
     
     ## Stop the WebSocket server
