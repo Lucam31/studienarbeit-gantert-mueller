@@ -9,30 +9,36 @@ export default function WebsocketView() {
     const [count, setCount] = useState(0)
 
     useEffect(() => {
-        const ws = new WebSocket('ws://192.168.178.81:50000')
+        const wsUrl =
+        (import.meta as any).env?.VITE_WS_URL || `ws://${window.location.hostname}:50000`
+        const ws = new WebSocket(wsUrl)
 
         ws.onopen = () => {
-        console.log('Connected to WebSocket server')
-        setIsConnected(true)
+            console.log('Connected to WebSocket server:', wsUrl)
+            setIsConnected(true)
         }
 
         ws.onmessage = (event) => {
-        console.log('Message from server:', event.data)
+            console.log('Message from server:', event.data)
         }
 
-        ws.onclose = () => {
-        console.log('Disconnected from WebSocket server')
-        setIsConnected(false)
+        ws.onclose = (event) => {
+            console.log(
+                'Disconnected from WebSocket server:',
+                `code=${event.code}`,
+                `reason=${event.reason || '(none)'}`
+            )
+            setIsConnected(false)
         }
 
         ws.onerror = (error) => {
-        console.error('WebSocket error:', error)
+            console.error('WebSocket error:', error)
         }
 
         setSocket(ws)
 
         return () => {
-        ws.close()
+            ws.close()
         }
     }, [])
 
