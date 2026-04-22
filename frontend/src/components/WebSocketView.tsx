@@ -9,7 +9,7 @@ export default function WebsocketView() {
     const [count, setCount] = useState(0)
 
     useEffect(() => {
-        const ws = new WebSocket('ws://127.0.0.1:50000')
+        const ws = new WebSocket('ws://192.168.178.81:50000')
 
         ws.onopen = () => {
         console.log('Connected to WebSocket server')
@@ -39,10 +39,10 @@ export default function WebsocketView() {
     const sendMessage = () => {
         if (socket && isConnected) {
         const jsonMessage = {
-            id: 'frontend_example',
+            id: 'drive_command',
             payload: {
-            key: message,
-            timestamp: new Date().toISOString(),
+            speed: 50,
+            steering: 0,
             },
         }
         socket.send(JSON.stringify(jsonMessage))
