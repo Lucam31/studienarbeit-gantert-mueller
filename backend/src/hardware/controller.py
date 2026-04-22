@@ -143,6 +143,68 @@ class Controller:
     def get_current_speed(self):
         # if hall sensor has not been triggered for more than 4 seconds, assume the car has stopped
         return self.current_speed if (time() - self.last_hall_sensor_time) < 4.0 else 0.0
+
+    @staticmethod
+    def _clamp(value: float, min_value: float, max_value: float) -> float:
+        if value < min_value:
+            return min_value
+        if value > max_value:
+            return max_value
+        return value
+
+    def drive_tank(self, left_speed: float, right_speed: float) -> None:
+        """Drive left/right motors directly.
+
+        Args:
+            left_speed: Signed speed in range [-100, 100]. Sign controls direction.
+            right_speed: Signed speed in range [-100, 100]. Sign controls direction.
+        """
+        left_speed = float(self._clamp(left_speed, -100.0, 100.0))
+        right_speed = float(self._clamp(right_speed, -100.0, 100.0))
+
+        left_forward = left_speed >= 0.0
+        right_forward = right_speed >= 0.0
+
+        left_duty = abs(left_speed)
+        right_duty = abs(right_speed)
+
+        # Right motor direction (A)
+        self.drivers.write(self.ain1, not right_forward)
+        self.drivers.write(self.ain2, right_forward)
+        self.drivers.setup_pwm(self.apwm, frequency=1000, duty_cycle=right_duty)
+
+        # Left motor direction (B)
+        self.drivers.write(self.bin1, left_forward)
+        self.drivers.write(self.bin2, not left_forward)
+        self.drivers.setup_pwm(self.bpwm, frequency=1000, duty_cycle=left_duty)
+
+        # Track last commanded speed magnitude for other logic.
+        self.last_set_speed = max(left_duty, right_duty)
+
+    def drive_joystick(self, x: float, y: float) -> None:
+        """Convert joystick values into differential motor speeds.
+
+        `x` steers (left/right), `y` throttles (forward/back).
+
+        Both inputs are expected in [-100, 100].
+        """
+        x = float(self._clamp(x, -100.0, 100.0))
+        y = float(self._clamp(y, -100.0, 100.0))
+
+        # Simple arcade mixing:
+        # - y=100,x=0 => both motors +100
+        # - y=0,x=100 => spin in place (left +100, right -100)
+        # - y=50,x=50 => left 100, right 0
+        left = y + x
+        right = y - x
+        left = self._clamp(left, -100.0, 100.0)
+        right = self._clamp(right, -100.0, 100.0)
+
+        if left == 0.0 and right == 0.0:
+            self.stop()
+            return
+
+        self.drive_tank(left_speed=left, right_speed=right)
     
     def drive(self, speed: float, steering: float = 0.0, forward: bool = True):
         # calculate speed of each wheel based on steering input (steering is between -1 and 1, where -1 is full left and 1 is full right)
@@ -150,6 +212,11 @@ class Controller:
         self.last_set_speed = speed
         right_wheel_speed = speed * (1 - steering)
         left_wheel_speed = speed * (1 + steering)
+
+        if right_wheel_speed < 0:
+            right_wheel_speed = 0
+        if left_wheel_speed < 0:
+            left_wheel_speed = 0
 
         # Set right wheel direction and speed
         self.drivers.write(self.ain1, not forward)

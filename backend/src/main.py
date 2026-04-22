@@ -48,11 +48,26 @@ class MainApp(QObject):
         msg_id = json.loads(msg_id)
         payload = json.loads(payload)
         print(f"Message ID: {msg_id}, Payload: {payload}")
-        if msg_id == "drive_command":
-            # speed is value between -100 and 100, where negative values indicate reverse and positive values indicate forward
-            # steering is value between -1 and 1, where -1 is full left and 1 is full right
-            speed = payload["speed"]
-            steering = payload["steering"]
+        if msg_id in ("drive_command", "joystick_command"):
+            # Joystick payload (preferred): x/y in [-100, 100]
+            # - y controls throttle (forward/back)
+            # - x controls steering (left/right)
+            if "x" in payload and "y" in payload:
+                self.controller.drive_joystick(x=payload["x"], y=payload["y"])
+                return
+
+            # Legacy payload: speed + steering
+            # speed: typically [-100, 100]
+            # steering: either [-1, 1] or [-100, 100]
+            speed = float(payload.get("speed", 0))
+            steering_raw = float(payload.get("steering", 0))
+
+            steering = steering_raw / 100.0 if abs(steering_raw) > 1.0 else steering_raw
+            if steering < -1.0:
+                steering = -1.0
+            if steering > 1.0:
+                steering = 1.0
+
             if speed > 0:
                 self.controller.drive(speed, steering, True)
             elif speed < 0:
