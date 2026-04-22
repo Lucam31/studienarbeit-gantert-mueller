@@ -1,80 +1,104 @@
-import { useEffect, useRef } from "react";
-
-class WebRTCReader {
-  private pc: RTCPeerConnection;
-  private url: string;
-  private onTrack?: (evt: RTCTrackEvent) => void;
-  private onError?: (err: Error) => void;
-
-  constructor(config: {
-    url: string;
-    onTrack?: (evt: RTCTrackEvent) => void;
-    onError?: (err: Error) => void;
-  }) {
-    this.url = config.url;
-    this.onTrack = config.onTrack;
-    this.onError = config.onError;
-    
-    this.pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-    });
-
-    this.pc.ontrack = (evt) => {
-      console.log("Track received:", evt);
-      this.onTrack?.(evt);
-    };
-
-    this.pc.oniceconnectionstatechange = () => {
-      console.log("ICE connection state:", this.pc.iceConnectionState);
-    };
-
-    this.start();
-  }
-
-  private async start() {
-    try {
-      // Transceiver für Video hinzufügen
-      this.pc.addTransceiver("video", { direction: "recvonly" });
-      this.pc.addTransceiver("audio", { direction: "recvonly" });
-
-      // Offer erstellen
-      const offer = await this.pc.createOffer();
-      await this.pc.setLocalDescription(offer);
-
-      // WHEP Request an MediaMTX
-      const response = await fetch(this.url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/sdp",
-        },
-        body: offer.sdp,
-      });
-
-      if (!response.ok) {
-        throw new Error(`WHEP request failed: ${response.status}`);
-      }
-
-      const answerSdp = await response.text();
-      await this.pc.setRemoteDescription({
-        type: "answer",
-        sdp: answerSdp,
-      });
-
-      console.log("WebRTC connection established");
-    } catch (err) {
-      console.error("WebRTC setup error:", err);
-      this.onError?.(err as Error);
-    }
-  }
-
-  close() {
-    this.pc.close();
-  }
-}
+import { useEffect, useRef, useState } from "react";
+import { WebRTCReader } from "./WebRTCReader";
+import { Joystick } from 'react-joystick-component';
 
 export default function MainView() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const readerRef = useRef<WebRTCReader | null>(null);
+  const [aspectRatio, setAspectRatio] = useState(16 / 9);
+
+  const [socket, setSocket] = useState<WebSocket | null>(null)
+    const [isConnected, setIsConnected] = useState(false)
+    const [joystickKey, setJoystickKey] = useState(0)
+    const lastMoveSentAtRef = useRef(0)
+    const lastSpeed = useRef(0)
+    const lastSteering = useRef(0)
+
+    useEffect(() => {
+        const wsUrl =
+        (import.meta as any).env?.VITE_WS_URL || `ws://${window.location.hostname}:50000`
+        const ws = new WebSocket(wsUrl)
+
+        ws.onopen = () => {
+            console.log('Connected to WebSocket server:', wsUrl)
+            setIsConnected(true)
+        }
+
+        ws.onmessage = (event) => {
+            console.log('Message from server:', event.data)
+        }
+
+        ws.onclose = (event) => {
+            console.log(
+                'Disconnected from WebSocket server:',
+                `code=${event.code}`,
+                `reason=${event.reason || '(none)'}`
+            )
+            setIsConnected(false)
+        }
+
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error)
+        }
+
+        setSocket(ws)
+
+        return () => {
+            ws.close()
+        }
+    }, [])
+
+    const handleMove = (event: any) => {
+        const { x, y } = event
+        console.log('Joystick move:', { x, y })
+
+        const now = Date.now()
+        // if (now - lastMoveSentAtRef.current < 300) {
+        //     return
+        // }
+
+        const speed = Math.round(Math.round(y  * 100)/5)*5 // Convert to range -100 to 100
+        const steering = Math.round(Math.round(x  * 100)/5)*5 // Convert to range -100 to 100
+        if (speed === lastSpeed.current && steering === lastSteering.current) {
+            return
+        }
+        lastSpeed.current = speed
+        lastSteering.current = steering
+        const jsonMessage = {
+            id: 'drive_command',
+            payload: {
+                x: steering,
+                y: speed,
+            },
+        }
+        if (socket && isConnected) {
+            socket.send(JSON.stringify(jsonMessage))
+            lastMoveSentAtRef.current = now
+            console.log('Joystick move message sent:', jsonMessage)
+        } else {
+            console.error('WebSocket is not connected')
+        }
+    }
+
+    const handleStop = () => {
+        const jsonMessage = {
+            id: 'drive_command',
+            payload: {
+                x: 0,
+                y: 0,
+            },
+        }
+        if (socket && isConnected) {
+            socket.send(JSON.stringify(jsonMessage))
+            console.log('Joystick stop message sent:', jsonMessage)
+        } else {
+            console.error('WebSocket is not connected')
+        }
+
+        // With sticky=true, remounting clears internal stick coordinates back to center.
+        setJoystickKey((prev) => prev + 1)
+    }
+
 
   useEffect(() => {
     readerRef.current = new WebRTCReader({
@@ -98,9 +122,44 @@ export default function MainView() {
     };
   }, []);
 
+  const handleVideoMetadata = () => {
+    const video = videoRef.current;
+    if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
+      return;
+    }
+
+    setAspectRatio(video.videoWidth / video.videoHeight);
+  };
+
+
+
   return (
-    <div className="main-view">
-      <video ref={videoRef} muted autoPlay width="1280" height="720" />
+    <div className="flex w-full min-h-dvh p-4 gap-4">
+      <div className="flex flex-col justify-center">
+        <Joystick key={joystickKey} size={100} sticky={true} baseColor="rgba(171, 163, 163, 0.14)" stickColor="rgb(178, 35, 35)" move={handleMove} stop={handleStop}></Joystick>
+      </div>
+      
+      <div className="flex w-full flex-1 items-center justify-center p-4">
+        <div
+          className="relative w-full overflow-hidden rounded-lg bg-black"
+          style={{ aspectRatio }}
+        >
+          <video
+            ref={videoRef}
+            muted
+            autoPlay
+            playsInline
+            onLoadedMetadata={handleVideoMetadata}
+            className="absolute inset-0 h-full w-full object-contain"
+          />
+        </div>
+      </div>
+      
+      <div className="flex items-center">
+        <button className="p-4 bg-red-600 rounded-2xl text-white">
+          Stop
+        </button>
+      </div>
     </div>
   );
 }
