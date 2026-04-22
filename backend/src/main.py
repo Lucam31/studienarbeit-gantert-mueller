@@ -15,9 +15,9 @@ class MainApp(QObject):
         self.controller = controller.Controller(self.drivers)
         self.emergency_stop_active = False
         # self.test_routine()
-        # self.websocket = WebSocket()
-        # self.websocket.SignalMessageReceived.connect(self.handle_websocket_message)
-        # self.websocket.start_server(50000)
+        self.websocket = WebSocket()
+        self.websocket.SignalMessageReceived.connect(self.handle_websocket_message)
+        self.websocket.start_server(50000)
         timer = QTimer(self)
         timer.timeout.connect(self.emergency_stop)
         # timer.start(500)  # Call emergency_stop every 500 ms
@@ -86,7 +86,7 @@ class MainApp(QObject):
     # @description: This function is called when a close event is triggered (e.g., when Ctrl+C is pressed in the console). It performs cleanup operations, such as stopping the WebSocket server and quitting the application gracefully.
     def handle_close_event(self, signal_received, frame) -> None:
         print("\nCtrl+C detected. Closing application...")
-        # self.websocket.stop_server()
+        self.websocket.stop_server()
         app.quit()
 
 
@@ -113,7 +113,7 @@ class MainApp(QObject):
 if __name__ == "__main__":
     app = QCoreApplication([])
     main_app = MainApp()
-    # main_app.websocket.start_server(50000)
+    main_app.websocket.start_server(50000)
 
     signal.signal(signal.SIGINT, main_app.handle_close_event)
 

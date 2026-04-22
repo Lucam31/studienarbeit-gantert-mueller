@@ -13,12 +13,12 @@ class Controller:
         self.apwm = 12
         self.astby = 17
         # change bin1 and bin2 to other pins for second motor, 29 and 31 should work
-        self.bin1 = 29
-        self.bin2 = 31
-        self.bpwm = 33 # is pwm1 so should work
-        self.bstby = 36 # should work too
+        # self.bin1 = 29
+        # self.bin2 = 31
+        # self.bpwm = 33 # is pwm1 so should work
+        # self.bstby = 36 # should work too
 
-        self.hall_sensor = 16 # choose a GPIO pin
+        # self.hall_sensor = 16 # choose a GPIO pin
         self.setup_pins()
 
         self.last_hall_sensor_time = time()
@@ -35,24 +35,24 @@ class Controller:
         self.drivers.setup_output(self.astby, initial=True)
 
         # left motor
-        self.drivers.setup_output(self.bin1, initial=False)
-        self.drivers.setup_output(self.bin2, initial=False)
-        self.drivers.setup_output(self.bpwm, initial=True)
-        self.drivers.setup_output(self.bstby, initial=True)
+        # self.drivers.setup_output(self.bin1, initial=False)
+        # self.drivers.setup_output(self.bin2, initial=False)
+        # self.drivers.setup_output(self.bpwm, initial=True)
+        # self.drivers.setup_output(self.bstby, initial=True)
 
         """ Setup hall sensor pin """
-        self.drivers.setup_input(self.hall_sensor, pull=None)
+        # self.drivers.setup_input(self.hall_sensor, pull=None)
 
         """ Setup callback for hall sensor """
-        self.drivers.add_event_detect(self.hall_sensor, "falling", callback=self.sensorCallback)
+        # self.drivers.add_event_detect(self.hall_sensor, "falling", callback=self.sensorCallback)
 
         """ Setup ultrasonic sensor pins """
         # self.drivers.setup_output(self.ultrasonic_trigger, initial=False)
         # self.drivers.setup_input(self.ultrasonic_echo, pull="down")
-        self.trigger = 14
-        self.echo = 15
-        self._distance_sensor_ready = False
-        self.setup_distance_sensor()
+        # self.trigger = 14
+        # self.echo = 15
+        # self._distance_sensor_ready = False
+        # self.setup_distance_sensor()
 
     def setup_distance_sensor(self):
         if self._distance_sensor_ready:
@@ -171,12 +171,12 @@ class Controller:
         # Right motor direction (A)
         self.drivers.write(self.ain1, not right_forward)
         self.drivers.write(self.ain2, right_forward)
-        self.drivers.setup_pwm(self.apwm, frequency=1000, duty_cycle=right_duty)
+        self.drivers.setup_pwm(self.apwm, frequency=5000, duty_cycle=right_duty)
 
         # Left motor direction (B)
-        self.drivers.write(self.bin1, left_forward)
-        self.drivers.write(self.bin2, not left_forward)
-        self.drivers.setup_pwm(self.bpwm, frequency=1000, duty_cycle=left_duty)
+        # self.drivers.write(self.bin1, left_forward)
+        # self.drivers.write(self.bin2, not left_forward)
+        # self.drivers.setup_pwm(self.bpwm, frequency=1000, duty_cycle=left_duty)
 
         # Track last commanded speed magnitude for other logic.
         self.last_set_speed = max(left_duty, right_duty)
@@ -224,17 +224,17 @@ class Controller:
         self.drivers.setup_pwm(self.apwm, frequency=1000, duty_cycle=right_wheel_speed)
 
         # Set left wheel direction and speed
-        self.drivers.write(self.bin1, forward)
-        self.drivers.write(self.bin2, not forward)
-        self.drivers.setup_pwm(self.bpwm, frequency=1000, duty_cycle=left_wheel_speed)
+        # self.drivers.write(self.bin1, forward)
+        # self.drivers.write(self.bin2, not forward)
+        # self.drivers.setup_pwm(self.bpwm, frequency=1000, duty_cycle=left_wheel_speed)
 
     def stop(self):
         self.drivers.write(self.ain1, False)
         self.drivers.write(self.ain2, False)
         self.drivers.setup_pwm(self.apwm, frequency=1000, duty_cycle=0)
-        self.drivers.write(self.bin1, False)
-        self.drivers.write(self.bin2, False)
-        self.drivers.setup_pwm(self.bpwm, frequency=1000, duty_cycle=0)
+        # self.drivers.write(self.bin1, False)
+        # self.drivers.write(self.bin2, False)
+        # self.drivers.setup_pwm(self.bpwm, frequency=1000, duty_cycle=0)
 
     def get_distance_to_obstacle(self) -> float:
         # implement logic to get distance to obstacle using ultrasonic sensor
