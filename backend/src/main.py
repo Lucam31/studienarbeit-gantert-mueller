@@ -113,7 +113,6 @@ class MainApp(QObject):
 if __name__ == "__main__":
     app = QCoreApplication([])
     main_app = MainApp()
-    main_app.websocket.start_server(50000)
 
     signal.signal(signal.SIGINT, main_app.handle_close_event)
 
