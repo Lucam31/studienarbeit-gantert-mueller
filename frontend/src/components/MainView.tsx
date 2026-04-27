@@ -13,6 +13,7 @@ export default function MainView() {
     const lastMoveSentAtRef = useRef(0)
     const lastSpeed = useRef(0)
     const lastSteering = useRef(0)
+    const autopilotEnabled = useRef(false)
 
     useEffect(() => {
         const wsUrl =
@@ -99,6 +100,41 @@ export default function MainView() {
         setJoystickKey((prev) => prev + 1)
     }
 
+    const toggleAutopilot = () => {
+        
+      if (autopilotEnabled.current) {
+        stopVision()
+      } else {
+        startVision()
+      }
+      autopilotEnabled.current = !autopilotEnabled.current 
+    }
+
+    const startVision = () => {
+      const message = {
+        id: "follow_line_command",
+        payload: { action: "start" }
+      }
+      if (socket && isConnected) {
+            socket.send(JSON.stringify(message))
+            console.log('Start vision message sent:', message)
+        } else {
+            console.error('WebSocket is not connected')
+        }
+    }
+
+    const stopVision = () => {
+      const message = {
+        id: "follow_line_command",
+        payload: { action: "stop" }
+      }
+      if (socket && isConnected) {
+            socket.send(JSON.stringify(message))
+            console.log('Stop vision message sent:', message)
+        } else {
+            console.error('WebSocket is not connected')
+        }
+    }
 
   useEffect(() => {
     readerRef.current = new WebRTCReader({
@@ -156,8 +192,8 @@ export default function MainView() {
       </div>
       
       <div className="flex items-center">
-        <button className="p-4 bg-red-600 rounded-2xl text-white">
-          Stop
+        <button className="p-4 bg-red-600 rounded-2xl text-white" onClick={() => toggleAutopilot()}>
+          Mode
         </button>
       </div>
     </div>

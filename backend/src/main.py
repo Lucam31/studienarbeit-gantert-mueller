@@ -1,12 +1,13 @@
 import time
 
-from PySide6.QtCore import QObject, Signal, QTimer, QCoreApplication, QThread
+from PySide6.QtCore import QObject, QTimer, QCoreApplication, QThread
 from websocket.server import WebSocket
-from utils.logger import Logger
 import signal, json
 
 import hardware.controller as controller
 import hardware.drivers as drivers
+from vision.worker import VisionWorker
+from vision.mjpeg_server import MJPEGServer
 
 class MainApp(QObject):
     def __init__(self):
@@ -14,6 +15,13 @@ class MainApp(QObject):
         self.drivers = drivers.Drivers()
         self.controller = controller.Controller(self.drivers)
         self.emergency_stop_active = False
+        self.vision_thread = None
+        self.vision_worker = None
+        
+        # MJPEG-Server für Debug-Stream
+        self.mjpeg_server = MJPEGServer(port=8080)
+        self.mjpeg_server.start()
+        
         # self.test_routine()
         self.websocket = WebSocket()
         self.websocket.SignalMessageReceived.connect(self.handle_websocket_message)
@@ -75,10 +83,61 @@ class MainApp(QObject):
             else:
                 self.controller.stop()
         elif msg_id == "follow_line_command":
-            # implement logic for follow the line command
-            print("Follow line command received. Implement logic to follow the line.")
+            action = str(payload.get("action", "")).lower()
+            enabled = payload.get("enabled")
+
+            if action == "start" or enabled is True:
+                self.start_vision_worker()
+            elif action == "stop" or enabled is False:
+                self.stop_vision_worker()
+            else:
+                print(
+                    "follow_line_command needs payload.action=start|stop "
+                    "or payload.enabled=true|false"
+                )
         else:
             print(f"Unknown message id: {msg_id}")
+
+    def start_vision_worker(self) -> None:
+        if self.vision_thread is not None and self.vision_thread.isRunning():
+            print("Vision worker is already running.")
+            return
+
+        self.vision_thread = QThread(self)
+        self.vision_worker = VisionWorker(
+            rtsp_url="rtsp://127.0.0.1:8554/cam",
+            mjpeg_server=self.mjpeg_server
+        )
+        self.vision_worker.moveToThread(self.vision_thread)
+
+        self.vision_thread.started.connect(self.vision_worker.start_processing)
+        self.vision_worker.steeringCommand.connect(self.on_vision_command)
+        self.vision_worker.status.connect(print)
+        self.vision_worker.finished.connect(self.vision_thread.quit)
+        self.vision_worker.finished.connect(self.vision_worker.deleteLater)
+        self.vision_thread.finished.connect(self._on_vision_thread_finished)
+
+        self.vision_thread.start()
+        print("Vision worker thread started.")
+
+    def stop_vision_worker(self) -> None:
+        if self.vision_worker is not None:
+            self.vision_worker.stop_processing()
+
+        if self.vision_thread is not None and self.vision_thread.isRunning():
+            self.vision_thread.quit()
+            self.vision_thread.wait(3000)
+            print("Vision worker thread stopped.")
+
+    def _on_vision_thread_finished(self) -> None:
+        if self.vision_thread is not None:
+            self.vision_thread.deleteLater()
+        self.vision_thread = None
+        self.vision_worker = None
+
+    def on_vision_command(self, x: float, y: float) -> None:
+        """Callback wenn Vision-Worker einen Steuerbefehl sendet"""
+        self.controller.drive_joystick(x=x, y=y)
 
     ## Callback function to handle close event (e.g., when Ctrl+C is pressed)
     # @param signal_received: The signal received (e.g., SIGINT)
@@ -86,6 +145,8 @@ class MainApp(QObject):
     # @description: This function is called when a close event is triggered (e.g., when Ctrl+C is pressed in the console). It performs cleanup operations, such as stopping the WebSocket server and quitting the application gracefully.
     def handle_close_event(self, signal_received, frame) -> None:
         print("\nCtrl+C detected. Closing application...")
+        self.stop_vision_worker()
+        self.mjpeg_server.stop()
         self.websocket.stop_server()
         app.quit()
 
@@ -113,6 +174,7 @@ class MainApp(QObject):
 if __name__ == "__main__":
     app = QCoreApplication([])
     main_app = MainApp()
+
 
     signal.signal(signal.SIGINT, main_app.handle_close_event)
 
