@@ -11,6 +11,9 @@ class MJPEGHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=FRAME')
             self.send_header('Connection', 'close')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Expires', '0')
             self.end_headers()
             
             timeout_count = 0

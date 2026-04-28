@@ -22,7 +22,6 @@ class MainApp(QObject):
         self.mjpeg_server = MJPEGServer(port=8080)
         self.mjpeg_server.start()
         
-        # self.test_routine()
         self.websocket = WebSocket()
         self.websocket.SignalMessageReceived.connect(self.handle_websocket_message)
         self.websocket.start_server(50000)
@@ -30,32 +29,16 @@ class MainApp(QObject):
         timer.timeout.connect(self.emergency_stop)
         # timer.start(500)  # Call emergency_stop every 500 ms
 
-    def test_routine(self):
-        # Use Drivers abstraction (gpiozero+lgpio) for Raspberry Pi 5 compatibility.
-        button_pin = 26  # BCM by default; call initialize(mode=drivers.BOARD) to use physical pin numbers
-        self.drivers.initialize()
-        self.drivers.setup_input(button_pin, pull="down")
-        print("Test routine started")
-        last_button_state = False
-        while True: # Run forever
-            button_state = self.drivers.read(button_pin)
-            if button_state and not last_button_state:
-                print("Button was pushed!")
-                self.controller.test()
-            last_button_state = button_state
-            time.sleep(0.01)  # Sleep to avoid busy waiting
-
     ## Callback function to handle messages received from the WebSocket server
     # @param msg_id: The ID of the message received from the client
     # @param payload: The payload of the message received from the client
     # @description: This function is called when a message is received from the WebSocket server. It processes the message and implements the logic to handle different types of messages based on their IDs.
     def handle_websocket_message(self, msg_id: str, payload: str) -> None:
-        print(f"Message received from WebSocket: {payload}")
         # implement logic for handling messages from the WebSocket
         """ differenciate between message ids? one id for drive command, one for follow the line command, etc. """
         msg_id = json.loads(msg_id)
         payload = json.loads(payload)
-        print(f"Message ID: {msg_id}, Payload: {payload}")
+        
         if msg_id in ("drive_command", "joystick_command"):
             # Joystick payload (preferred): x/y in [-100, 100]
             # - y controls throttle (forward/back)
@@ -63,25 +46,27 @@ class MainApp(QObject):
             if "x" in payload and "y" in payload:
                 self.controller.drive_joystick(x=payload["x"], y=payload["y"])
                 return
+            else:
+                print("Joystick command missing 'x' or 'y' in payload")
 
             # Legacy payload: speed + steering
             # speed: typically [-100, 100]
             # steering: either [-1, 1] or [-100, 100]
-            speed = float(payload.get("speed", 0))
-            steering_raw = float(payload.get("steering", 0))
+            #speed = float(payload.get("speed", 0))
+            #steering_raw = float(payload.get("steering", 0))
 
-            steering = steering_raw / 100.0 if abs(steering_raw) > 1.0 else steering_raw
-            if steering < -1.0:
-                steering = -1.0
-            if steering > 1.0:
-                steering = 1.0
+            #steering = steering_raw / 100.0 if abs(steering_raw) > 1.0 else steering_raw
+            #if steering < -1.0:
+            #    steering = -1.0
+            #if steering > 1.0:
+            #    steering = 1.0
 
-            if speed > 0:
-                self.controller.drive(speed, steering, True)
-            elif speed < 0:
-                self.controller.drive(-speed, steering, False)
-            else:
-                self.controller.stop()
+            #if speed > 0:
+            #    self.controller.drive(speed, steering, True)
+            #elif speed < 0:
+            #    self.controller.drive(-speed, steering, False)
+            #else:
+            #    self.controller.stop()
         elif msg_id == "follow_line_command":
             action = str(payload.get("action", "")).lower()
             enabled = payload.get("enabled")

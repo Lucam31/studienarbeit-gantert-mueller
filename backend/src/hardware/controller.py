@@ -8,15 +8,17 @@ class Controller:
         self.drivers = drivers
         self.current_speed = 0.0
         self.last_set_speed = 0.0
-        self.ain1 = 27
-        self.ain2 = 22
-        self.apwm = 12
-        self.astby = 17
-        # change bin1 and bin2 to other pins for second motor, 29 and 31 should work
-        # self.bin1 = 29
-        # self.bin2 = 31
-        # self.bpwm = 33 # is pwm1 so should work
-        # self.bstby = 36 # should work too
+        
+        self.right1 = 27
+        self.right2 = 22
+        self.rightpwm = 12
+        self.rightstby = 17
+
+        
+        self.left1 = 26
+        self.left2 = 19
+        self.leftpwm = 16 # is pwm1 so should work
+        self.leftstby = 13 # should work too
 
         # self.hall_sensor = 16 # choose a GPIO pin
         self.setup_pins()
@@ -29,16 +31,16 @@ class Controller:
 
         """ Setup motor driver pins. in1 and in2 control the direction of the motor, pwm controls the speed, and stby is used to enable/disable the motor driver. """
         # right motor
-        self.drivers.setup_output(self.ain1, initial=False)
-        self.drivers.setup_output(self.ain2, initial=False)
-        self.drivers.setup_output(self.apwm, initial=True)
-        self.drivers.setup_output(self.astby, initial=True)
+        self.drivers.setup_output(self.right1, initial=False)
+        self.drivers.setup_output(self.right2, initial=False)
+        self.drivers.setup_output(self.rightpwm, initial=True)
+        self.drivers.setup_output(self.rightstby, initial=True)
 
         # left motor
-        # self.drivers.setup_output(self.bin1, initial=False)
-        # self.drivers.setup_output(self.bin2, initial=False)
-        # self.drivers.setup_output(self.bpwm, initial=True)
-        # self.drivers.setup_output(self.bstby, initial=True)
+        self.drivers.setup_output(self.left1, initial=False)
+        self.drivers.setup_output(self.left2, initial=False)
+        self.drivers.setup_output(self.leftpwm, initial=True)
+        self.drivers.setup_output(self.leftstby, initial=True)
 
         """ Setup hall sensor pin """
         # self.drivers.setup_input(self.hall_sensor, pull=None)
@@ -63,28 +65,6 @@ class Controller:
         # HC-SR04 needs a short settle time before first reliable pulse.
         sleep(0.06)
         self._distance_sensor_ready = True
-
-    # Controller sind higher level und koordinieren die Driver (Logik, (komplexere) Abläufe)
-    def test(self):
-        self.setup_distance_sensor()
-        distance = self.distanz()
-        if distance is None:
-            # Retry once after sensor rest time to avoid first-shot misses.
-            sleep(0.06)
-            distance = self.distanz()
-        print(distance)
-
-        print("Pin {} initial value:".format(self.ain1), self.drivers.read(self.ain1))
-        print("Pin {} value:".format(self.ain2), self.drivers.read(self.ain2))
-
-        self.drivers.setup_pwm(self.apwm, frequency=1000, duty_cycle=50)
-        print("Pin {} PWM setup with frequency 1000 Hz and duty cycle 50%".format(self.apwm))
-
-        self.drivers.toggle(self.ain2)
-        print("Pin {} after toggle:".format(self.ain2), self.drivers.read(self.ain2))
-
-        self.drivers.toggle(self.ain2)
-        print("Pin {} after toggle:".format(self.ain2), self.drivers.read(self.ain2))
 
     def distanz(self):
         max_distance_m = 4.0
@@ -169,14 +149,14 @@ class Controller:
         right_duty = abs(right_speed)
 
         # Right motor direction (A)
-        self.drivers.write(self.ain1, not right_forward)
-        self.drivers.write(self.ain2, right_forward)
-        self.drivers.setup_pwm(self.apwm, frequency=5000, duty_cycle=right_duty)
+        self.drivers.write(self.right1, not right_forward)
+        self.drivers.write(self.right2, right_forward)
+        self.drivers.setup_pwm(self.rightpwm, frequency=5000, duty_cycle=right_duty)
 
         # Left motor direction (B)
-        # self.drivers.write(self.bin1, left_forward)
-        # self.drivers.write(self.bin2, not left_forward)
-        # self.drivers.setup_pwm(self.bpwm, frequency=1000, duty_cycle=left_duty)
+        self.drivers.write(self.left1, left_forward)
+        self.drivers.write(self.left2, not left_forward)
+        self.drivers.setup_pwm(self.leftpwm, frequency=5000, duty_cycle=left_duty)
 
         # Track last commanded speed magnitude for other logic.
         self.last_set_speed = max(left_duty, right_duty)
@@ -206,6 +186,7 @@ class Controller:
 
         self.drive_tank(left_speed=left, right_speed=right)
     
+    """
     def drive(self, speed: float, steering: float = 0.0, forward: bool = True):
         # calculate speed of each wheel based on steering input (steering is between -1 and 1, where -1 is full left and 1 is full right)
         # when steering fully right/left, one wheel should be stopped and the other should be at full speed
@@ -219,22 +200,23 @@ class Controller:
             left_wheel_speed = 0
 
         # Set right wheel direction and speed
-        self.drivers.write(self.ain1, not forward)
-        self.drivers.write(self.ain2, forward)
-        self.drivers.setup_pwm(self.apwm, frequency=1000, duty_cycle=right_wheel_speed)
+        self.drivers.write(self.right1, not forward)
+        self.drivers.write(self.right2, forward)
+        self.drivers.setup_pwm(self.rightpwm, frequency=1000, duty_cycle=right_wheel_speed)
 
         # Set left wheel direction and speed
-        # self.drivers.write(self.bin1, forward)
-        # self.drivers.write(self.bin2, not forward)
-        # self.drivers.setup_pwm(self.bpwm, frequency=1000, duty_cycle=left_wheel_speed)
-
+        self.drivers.write(self.left1, forward)
+        self.drivers.write(self.left2, not forward)
+        self.drivers.setup_pwm(self.leftpwm, frequency=1000, duty_cycle=left_wheel_speed)
+    """
+        
     def stop(self):
-        self.drivers.write(self.ain1, False)
-        self.drivers.write(self.ain2, False)
-        self.drivers.setup_pwm(self.apwm, frequency=1000, duty_cycle=0)
-        # self.drivers.write(self.bin1, False)
-        # self.drivers.write(self.bin2, False)
-        # self.drivers.setup_pwm(self.bpwm, frequency=1000, duty_cycle=0)
+        self.drivers.write(self.right1, False)
+        self.drivers.write(self.right2, False)
+        self.drivers.setup_pwm(self.rightpwm, frequency=1000, duty_cycle=0)
+        self.drivers.write(self.left1, False)
+        self.drivers.write(self.left2, False)
+        self.drivers.setup_pwm(self.leftpwm, frequency=1000, duty_cycle=0)
 
     def get_distance_to_obstacle(self) -> float:
         # implement logic to get distance to obstacle using ultrasonic sensor

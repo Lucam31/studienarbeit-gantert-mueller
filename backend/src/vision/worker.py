@@ -1,5 +1,5 @@
 import cv2
-import threading
+import numpy as np
 import time
 from PySide6.QtCore import QObject, Signal, Slot
 
@@ -13,6 +13,7 @@ class VisionWorker(QObject):
         self._running = False
         self.rtsp_url = rtsp_url
         self.mjpeg_server = mjpeg_server  # MJPEGServer-Instanz
+        self.process_interval_s = 0.2
 
     @Slot()
     def start_processing(self):
@@ -37,41 +38,49 @@ class VisionWorker(QObject):
         
         self.status.emit("Vision: Stream geöffnet, verarbeite Frames...")
         print("[VISION] RTSP Stream opened successfully")
-        frame_count = 0
         error_count = 0
+        last_process_time = 0.0
         
         while self._running:
-            ret, frame = cap.read()
-            if not ret:
+            grabbed = cap.grab()
+            if not grabbed:
                 error_count += 1
-                self.status.emit(f"Vision: Fehler beim Frame-Lesen ({error_count})")
-                print(f"[VISION ERROR] Failed to read frame (error_count={error_count})")
+                self.status.emit(f"Vision: Fehler beim Frame-Grabbing ({error_count})")
+                print(f"[VISION ERROR] Failed to grab frame (error_count={error_count})")
                 if error_count > 10:
                     break
-                time.sleep(0.1)
+                time.sleep(0.05)
                 continue
-            
-            error_count = 0  # Reset error count on successful read
-            
-            # --- DEINE BILDVERARBEITUNG HIER ---
-            # Beispiel: Linienerkennung
-            x, y = self.process_frame(frame)
+
+            error_count = 0
+
+            now = time.monotonic()
+            if now - last_process_time < self.process_interval_s:
+                time.sleep(0.01)
+                continue
+
+            ret, frame = cap.retrieve()
+            if not ret:
+                error_count += 1
+                self.status.emit(f"Vision: Fehler beim Frame-Retrieval ({error_count})")
+                print(f"[VISION ERROR] Failed to retrieve frame (error_count={error_count})")
+                if error_count > 10:
+                    break
+                time.sleep(0.05)
+                continue
+
+            last_process_time = now
+
+            processed, x, y = self.process_frame(frame)
             self.steeringCommand.emit(float(x), float(y))
-            
-            # Debug-Frame in MJPEG-Stream schreiben
+
             if self.mjpeg_server is not None:
                 try:
-                    ret_enc, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    ret_enc, jpeg = cv2.imencode('.jpg', processed, [cv2.IMWRITE_JPEG_QUALITY, 80])
                     if ret_enc:
                         self.mjpeg_server.put_frame(jpeg.tobytes())
-                        if frame_count % 50 == 0:
-                            print(f"[VISION] Sent frame {frame_count} to MJPEG server (size: {len(jpeg.tobytes())} bytes)")
                 except Exception as e:
                     print(f"[VISION ERROR] Failed to encode/send frame: {e}")
-            
-            frame_count += 1
-            if frame_count % 100 == 0:
-                self.status.emit(f"Vision: {frame_count} Frames verarbeitet")
             
         cap.release()
         self._running = False
@@ -84,9 +93,23 @@ class VisionWorker(QObject):
         Verarbeite Frame und gebe Steuerwerte zurück.
         Returns: (x, y) wobei beide in [-100, 100]
         """
-        # TODO: Hier deine echte Vision-Pipeline
-        # Beispiel: Linien-Tracking, Objekt-Erkennung, etc.
-        return 0.0, 0.0
+        
+        # in hsv konvertieren 
+        # Farbton, Sättigung, Helligkeit
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        
+        # Maske für orange Farbe erstellen
+        lower = np.array([2, 150, 50])   # viel großzügiger
+        upper = np.array([18, 255, 255])
+
+        mask = cv2.inRange(hsv, lower, upper)
+        
+        # rauschen entfernen
+        kernel = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        
+        print("[VISION] Frame processed")
+        return mask, 0.0, 0.0
 
     @Slot()
     def stop_processing(self):
