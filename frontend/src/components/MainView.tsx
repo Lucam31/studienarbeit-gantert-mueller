@@ -172,7 +172,7 @@ export default function MainView() {
   return (
     <div className="flex w-full min-h-dvh p-4 gap-4">
       <div className="flex flex-col justify-center">
-        <Joystick key={joystickKey} size={100} sticky={true} baseColor="rgba(171, 163, 163, 0.14)" stickColor="rgb(178, 35, 35)" move={handleMove} stop={handleStop}></Joystick>
+        <Joystick key={joystickKey} size={200} sticky={true} baseColor="rgba(171, 163, 163, 0.14)" stickColor="rgb(178, 35, 35)" stickSize={100} move={handleMove} stop={handleStop}></Joystick>
       </div>
       
       <div className="flex w-full flex-1 items-center justify-center p-4">
