@@ -6,6 +6,8 @@ export default function MainView() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const readerRef = useRef<WebRTCReader | null>(null);
   const [aspectRatio, setAspectRatio] = useState(16 / 9);
+  const [joystickSize, setJoystickSize] = useState(200);
+  const [joystickStickSize, setJoystickStickSize] = useState(100);
 
   const [socket, setSocket] = useState<WebSocket | null>(null)
     const [isConnected, setIsConnected] = useState(false)
@@ -14,6 +16,22 @@ export default function MainView() {
     const lastSpeed = useRef(0)
     const lastSteering = useRef(0)
     const autopilotEnabled = useRef(false)
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const media = window.matchMedia("(max-width: 640px)");
+    const updateSizes = () => {
+      setJoystickSize(media.matches ? 75 : 150);
+      setJoystickStickSize(media.matches ? 50 : 75);
+    };
+
+    updateSizes();
+    media.addEventListener("change", updateSizes);
+    return () => media.removeEventListener("change", updateSizes);
+  }, []);
 
     useEffect(() => {
         const wsUrl =
@@ -172,7 +190,7 @@ export default function MainView() {
   return (
     <div className="flex w-full min-h-dvh p-4 gap-4">
       <div className="flex flex-col justify-center">
-        <Joystick key={joystickKey} size={200} sticky={true} baseColor="rgba(171, 163, 163, 0.14)" stickColor="rgb(178, 35, 35)" stickSize={100} move={handleMove} stop={handleStop}></Joystick>
+        <Joystick key={joystickKey} size={joystickSize} sticky={true} baseColor="rgba(171, 163, 163, 0.14)" stickColor="rgb(178, 35, 35)" stickSize={joystickStickSize} move={handleMove} stop={handleStop}></Joystick>
       </div>
       
       <div className="flex w-full flex-1 items-center justify-center p-4">
