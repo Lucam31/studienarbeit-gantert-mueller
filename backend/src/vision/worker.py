@@ -94,6 +94,10 @@ class VisionWorker(QObject):
         Returns: (x, y) wobei beide in [-100, 100]
         """
         
+        # Frame auf untere 50% beschränken
+        height, width = frame.shape[:2]
+        roi_frame = frame[height // 2:, :]
+
         # in hsv konvertieren 
         # Farbton, Sättigung, Helligkeit
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -103,13 +107,30 @@ class VisionWorker(QObject):
         upper = np.array([18, 255, 255])
 
         mask = cv2.inRange(hsv, lower, upper)
-        
         # rauschen entfernen
-        kernel = np.ones((3, 3), np.uint8)
+        kernel = np.ones((4, 4), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if contours:
+            largest = max(contours, key=cv2.contourArea)
+            
+            if cv2.contourArea(largest) > 500:
+                # Centroid für Steuerung
+                M = cv2.moments(largest)
+                cx = int(M["m10"] / M["m00"])
+                
+                # Fehler relativ zur Bildmitte
+                error = cx - (width // 2)
+                
+                # Kontur einzeichnen (auf roi_frame, nicht frame)
+                cv2.drawContours(roi_frame, [largest], -1, (0, 255, 0), 2)
+                cv2.circle(roi_frame, (cx, int(M["m01"] / M["m00"])), 5, (0, 0, 255), -1)
+                
         print("[VISION] Frame processed")
-        return mask, 0.0, 0.0
+        return roi_frame, 0.0, 0.0
+        
 
     @Slot()
     def stop_processing(self):
