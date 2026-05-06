@@ -25,9 +25,12 @@ class MainApp(QObject):
         self.websocket = WebSocket()
         self.websocket.SignalMessageReceived.connect(self.handle_websocket_message)
         self.websocket.start_server(50000)
+        self.control_timer = QTimer(self)
+        self.control_timer.timeout.connect(self.controller.update)
+        self.control_timer.start(20)
         timer = QTimer(self)
         timer.timeout.connect(self.emergency_stop)
-        # timer.start(500)  # Call emergency_stop every 500 ms
+        timer.start(500)  # Call emergency_stop every 500 ms
 
     ## Callback function to handle messages received from the WebSocket server
     # @param msg_id: The ID of the message received from the client
@@ -141,7 +144,10 @@ class MainApp(QObject):
     ## Function to perform an emergency stop
     # @description: This function is called periodically by a timer to check if an emergency stop condition is met (e.g., if the calculated braking distance plus a safety margin is greater than the distance to an obstacle). If the condition is met, it stops the vehicle and activates the emergency stop state.
     def emergency_stop(self) -> None:
+        return
         print("Emergency stop check...")
+        print(self.controller.distanz())
+        return
         speed = self.controller.get_current_speed()
         break_distance = (speed/10) * (speed/10) * 0.5
         # if car is sliding but wheels are not turning it thinks the car stopped

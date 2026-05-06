@@ -1,14 +1,26 @@
 from datetime import datetime
 
+from functools import partial
 import hardware.drivers
-from time import sleep, time
+import time
 
 class Controller:
     def __init__(self, drivers):
         self.drivers = drivers
-        self.current_speed = 0.0
+        self.leftcurrent_speed = 0.0
+        self.rightcurrent_speed = 0.0
         self.last_set_speed = 0.0
+        self.max_speed_change_per_s = 120.0
+        self._left_command = 0.0
+        self._right_command = 0.0
+        self._left_target = 0.0
+        self._right_target = 0.0
+        self._last_drive_ts = None
         
+        # pull up for right hall sensor, pull down
+        self.leftHallSensorPin = 23
+        self.rightHallSensorPin = 24
+
         self.right1 = 27
         self.right2 = 22
         self.rightpwm = 12
@@ -20,13 +32,25 @@ class Controller:
         self.leftpwm = 16 # is pwm1 so should work
         self.leftstby = 13 # should work too
 
+        # ultrasonic sensor pins
+        self.trigger = 14
+        self.echo = 15
+        
         # self.hall_sensor = 16 # choose a GPIO pin
         self.setup_pins()
 
-        self.last_hall_sensor_time = time()
-        self.wheel_circumference = 0.2 # in meters
+        self.last_hall_sensor_time = time.time()
+        self.wheel_circumference = 0.3927 # in meters
 
     def setup_pins(self):
+        """ Setup hall sensor pin """
+        self.drivers.setup_input(self.leftHallSensorPin, pull="up")
+        self.drivers.setup_input(self.rightHallSensorPin, pull="up")
+
+        """ Setup callback for hall sensor """
+        self.drivers.add_event_detect(self.leftHallSensorPin, "falling", callback=partial(self.sensorCallback, "left"))
+        self.drivers.add_event_detect(self.rightHallSensorPin, "falling", callback=partial(self.sensorCallback, "right"))
+
         self.drivers.initialize()
 
         """ Setup motor driver pins. in1 and in2 control the direction of the motor, pwm controls the speed, and stby is used to enable/disable the motor driver. """
@@ -42,19 +66,11 @@ class Controller:
         self.drivers.setup_output(self.leftpwm, initial=True)
         self.drivers.setup_output(self.leftstby, initial=True)
 
-        """ Setup hall sensor pin """
-        # self.drivers.setup_input(self.hall_sensor, pull=None)
-
-        """ Setup callback for hall sensor """
-        # self.drivers.add_event_detect(self.hall_sensor, "falling", callback=self.sensorCallback)
-
         """ Setup ultrasonic sensor pins """
-        # self.drivers.setup_output(self.ultrasonic_trigger, initial=False)
-        # self.drivers.setup_input(self.ultrasonic_echo, pull="down")
-        # self.trigger = 14
-        # self.echo = 15
-        # self._distance_sensor_ready = False
-        # self.setup_distance_sensor()
+        self.drivers.setup_output(self.trigger, initial=False)
+        self.drivers.setup_input(self.echo, pull="down")
+        self._distance_sensor_ready = False
+        self.setup_distance_sensor()
 
     def setup_distance_sensor(self):
         if self._distance_sensor_ready:
@@ -63,7 +79,7 @@ class Controller:
         self.drivers.setup_output(self.trigger, initial=False)
         self.drivers.setup_input(self.echo, pull="down")
         # HC-SR04 needs a short settle time before first reliable pulse.
-        sleep(0.06)
+        time.sleep(0.06)
         self._distance_sensor_ready = True
 
     def distanz(self):
@@ -76,9 +92,9 @@ class Controller:
 
         # Trigger-Impuls: kurz LOW, dann 10 us HIGH, danach wieder LOW.
         self.drivers.write(self.trigger, False)
-        sleep(0.000002)
+        time.sleep(0.000002)
         self.drivers.write(self.trigger, True)
-        sleep(0.00001)
+        time.sleep(0.00001)
         self.drivers.write(self.trigger, False)
 
         # Auf steigende Echo-Flanke warten (Beginn der Laufzeitmessung).
@@ -106,11 +122,17 @@ class Controller:
         print("Gemessene Distanz = %.1f cm" % distanz)
         return distanz
 
-    def sensorCallback(self):
+    def sensorCallback(self, side ):
         # Called if sensor triggers rising edge
-        timestamp = time()
+        timestamp = time.time()
         time_diff = timestamp - self.last_hall_sensor_time
         self.last_hall_sensor_time = timestamp
+        if side == "left":
+            self.leftcurrent_speed = self.calc_speed(time_diff)
+        else:
+            self.rightcurrent_speed = self.calc_speed(time_diff)
+
+    def calc_speed(self, time_diff):
         if time_diff >= 4:
             # if hall sensor has not been triggered for more than 4 seconds, assume the car only just started moving again
             speed = 0.0
@@ -118,11 +140,12 @@ class Controller:
         elif time_diff > 0:
             speed = self.wheel_circumference / time_diff
             print(f"Hall sensor triggered. Time since last trigger: {time_diff:.2f} seconds. Estimated speed: {speed:.2f} m/s.")
-        self.current_speed = speed
+        return speed
 
     def get_current_speed(self):
         # if hall sensor has not been triggered for more than 4 seconds, assume the car has stopped
-        return self.current_speed if (time() - self.last_hall_sensor_time) < 4.0 else 0.0
+        return 1000
+        #return self.current_speed if (time.time() - self.last_hall_sensor_time) < 4.0 else 0.0
 
     @staticmethod
     def _clamp(value: float, min_value: float, max_value: float) -> float:
@@ -132,13 +155,17 @@ class Controller:
             return max_value
         return value
 
-    def drive_tank(self, left_speed: float, right_speed: float) -> None:
-        """Drive left/right motors directly.
+    @staticmethod
+    def _ramp(current: float, target: float, max_delta: float) -> float:
+        if max_delta <= 0.0:
+            return current
+        if target > current + max_delta:
+            return current + max_delta
+        if target < current - max_delta:
+            return current - max_delta
+        return target
 
-        Args:
-            left_speed: Signed speed in range [-100, 100]. Sign controls direction.
-            right_speed: Signed speed in range [-100, 100]. Sign controls direction.
-        """
+    def _apply_output(self, left_speed: float, right_speed: float) -> None:
         left_speed = float(self._clamp(left_speed, -100.0, 100.0))
         right_speed = float(self._clamp(right_speed, -100.0, 100.0))
 
@@ -161,6 +188,35 @@ class Controller:
         # Track last commanded speed magnitude for other logic.
         self.last_set_speed = max(left_duty, right_duty)
 
+    def _apply_ramp(self) -> None:
+        now = time.perf_counter()
+        if self._last_drive_ts is None:
+            self._left_command = self._left_target
+            self._right_command = self._right_target
+        else:
+            dt = max(0.0, now - self._last_drive_ts)
+            max_delta = self.max_speed_change_per_s * dt
+            self._left_command = self._ramp(self._left_command, self._left_target, max_delta)
+            self._right_command = self._ramp(self._right_command, self._right_target, max_delta)
+        self._last_drive_ts = now
+
+        self._apply_output(self._left_command, self._right_command)
+
+    def update(self) -> None:
+        """Apply the ramp toward the last commanded target."""
+        self._apply_ramp()
+
+    def drive_tank(self, left_speed: float, right_speed: float) -> None:
+        """Drive left/right motors directly.
+
+        Args:
+            left_speed: Signed speed in range [-100, 100]. Sign controls direction.
+            right_speed: Signed speed in range [-100, 100]. Sign controls direction.
+        """
+        self._left_target = float(self._clamp(left_speed, -100.0, 100.0))
+        self._right_target = float(self._clamp(right_speed, -100.0, 100.0))
+        self._apply_ramp()
+
     def drive_joystick(self, x: float, y: float) -> None:
         """Convert joystick values into differential motor speeds.
 
@@ -181,7 +237,7 @@ class Controller:
         right = self._clamp(right, -100.0, 100.0)
 
         if left == 0.0 and right == 0.0:
-            self.stop()
+            self.drive_tank(left_speed=0.0, right_speed=0.0)
             return
 
         self.drive_tank(left_speed=left, right_speed=right)
@@ -217,8 +273,8 @@ class Controller:
         self.drivers.write(self.left1, False)
         self.drivers.write(self.left2, False)
         self.drivers.setup_pwm(self.leftpwm, frequency=1000, duty_cycle=0)
-
-    def get_distance_to_obstacle(self) -> float:
-        # implement logic to get distance to obstacle using ultrasonic sensor
-        return 100.0
-
+        self._left_command = 0.0
+        self._right_command = 0.0
+        self._left_target = 0.0
+        self._right_target = 0.0
+        self._last_drive_ts = time.perf_counter()
