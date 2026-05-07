@@ -41,6 +41,9 @@ class MainApp(QObject):
         timer = QTimer(self)
         timer.timeout.connect(self.emergency_stop)
         timer.start(self.emergency_stop_check_ms)  # Call emergency_stop periodically
+        self.telemetry_timer = QTimer(self)
+        self.telemetry_timer.timeout.connect(self.send_telemetry)
+        self.telemetry_timer.start(200)
 
     ## Callback function to handle messages received from the WebSocket server
     # @param msg_id: The ID of the message received from the client
@@ -226,6 +229,7 @@ class MainApp(QObject):
                 print("Emergency stop activated! Obstacle too close.")
             return
 
+
         if break_distance + self.emergency_stop_brake_margin_cm >= distance and not driving_backward:
             self.break_time = time.time()
             self.emergency_stop_active = True
@@ -239,6 +243,21 @@ class MainApp(QObject):
                 self.emergency_stop_active = False
             return
 
+    def send_telemetry(self) -> None:
+        speed_kmh = self.controller.get_current_speed() * 3.6
+        distance_cm = self.last_distance_cm
+        if distance_cm is None:
+            distance_cm = self._update_distance()
+
+        message = {
+            "id": "telemetry",
+            "payload": {
+                "speed_kmh": speed_kmh,
+                "distance_cm": distance_cm,
+                "emergency_stop_active": self.emergency_stop_active,
+            },
+        }
+        self.websocket.push_message(message)
 
 if __name__ == "__main__":
     app = QCoreApplication([])

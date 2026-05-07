@@ -19,6 +19,9 @@ class Controller:
         self._last_drive_ts = None
         self._hall_sensor_timeout_s = 5.0
         self._hall_sensor_timer = None
+        self._hall_debounce_s = 0.02
+        self._hall_last_trigger = {"left": 0.0, "right": 0.0}
+        self._hall_last_speed_ts = {"left": 0.0, "right": 0.0}
         
         # pull up for right hall sensor, pull down
         self.leftHallSensorPin = 23
@@ -42,7 +45,11 @@ class Controller:
         # self.hall_sensor = 16 # choose a GPIO pin
         self.setup_pins()
 
-        self.last_hall_sensor_time = time.time()
+        now = time.monotonic()
+        self._hall_last_trigger["left"] = now
+        self._hall_last_trigger["right"] = now
+        self._hall_last_speed_ts["left"] = now
+        self._hall_last_speed_ts["right"] = now
         self.wheel_circumference = 0.3927 # in meters
         self._reset_hall_sensor_timer()
 
@@ -144,9 +151,13 @@ class Controller:
 
     def sensorCallback(self, side ):
         # Called if sensor triggers rising edge
-        timestamp = time.time()
-        time_diff = timestamp - self.last_hall_sensor_time
-        self.last_hall_sensor_time = timestamp
+        timestamp = time.monotonic()
+        if (timestamp - self._hall_last_trigger.get(side, 0.0)) < self._hall_debounce_s:
+            return
+        self._hall_last_trigger[side] = timestamp
+
+        time_diff = timestamp - self._hall_last_speed_ts.get(side, timestamp)
+        self._hall_last_speed_ts[side] = timestamp
         if side == "left":
             self.leftcurrent_speed = self.calc_speed(time_diff)
         else:
@@ -245,6 +256,11 @@ class Controller:
 
         Both inputs are expected in [-100, 100].
         """
+        if x == 0.0 and y == 0.0:
+            self.leftcurrent_speed = 0.0
+            self.rightcurrent_speed = 0.0
+
+
         x = float(self._clamp(x, -100.0, 100.0))
         y = float(self._clamp(y, -100.0, 100.0))
 

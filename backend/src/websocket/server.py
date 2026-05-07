@@ -14,6 +14,7 @@ class WebSocket(QObject):
         self.logger = Logger("WebSocket")
         self.port = 50000
         self.history = list()
+        self.max_history = 200
         self.server = QWebSocketServer('WebSocket', QWebSocketServer.NonSecureMode)
         self.websockets = dict()
         self.sendTimer = QTimer()
@@ -22,6 +23,18 @@ class WebSocket(QObject):
         # Bind to all IPv4 interfaces by default so other devices on the LAN can connect.
         # (Connecting clients must still use this machine's LAN IP, not 0.0.0.0/127.0.0.1.)
         self.address = QHostAddress(QHostAddress.AnyIPv4)  # or QHostAddress("192.168.x.y")
+
+    def push_message(self, message: dict) -> None:
+        self.history.append(message)
+        self._trim_history()
+
+    def _trim_history(self) -> None:
+        if len(self.history) <= self.max_history:
+            return
+        removed = len(self.history) - self.max_history
+        self.history = self.history[removed:]
+        for connection in list(self.websockets.keys()):
+            self.websockets[connection] = max(0, self.websockets[connection] - removed)
 
     def _guess_primary_ipv4(self) -> str | None:
         """Best-effort guess of the LAN IP other devices should connect to."""

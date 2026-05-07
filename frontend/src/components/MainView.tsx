@@ -8,11 +8,13 @@ export default function MainView() {
   const [aspectRatio, setAspectRatio] = useState(16 / 9);
   const [joystickSize, setJoystickSize] = useState(200);
   const [joystickStickSize, setJoystickStickSize] = useState(100);
+  const [distanceCm, setDistanceCm] = useState<number | null>(null);
+  const [emergencyStopActive, setEmergencyStopActive] = useState(false);
 
   const [socket, setSocket] = useState<WebSocket | null>(null)
     const [isConnected, setIsConnected] = useState(false)
     const [joystickKey, setJoystickKey] = useState(0)
-    const lastMoveSentAtRef = useRef(0)
+    const [speed, setSpeed] = useState(0)
     const lastSpeed = useRef(0)
     const lastSteering = useRef(0)
     const autopilotEnabled = useRef(false)
@@ -44,7 +46,47 @@ export default function MainView() {
         }
 
         ws.onmessage = (event) => {
-            console.log('Message from server:', event.data)
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(event.data)
+          } catch (error) {
+            console.warn('Failed to parse WebSocket message:', error)
+            return
+          }
+
+          const messages = Array.isArray(parsed) ? parsed : [parsed]
+          for (const message of messages) {
+            if (!message || typeof message !== 'object') {
+              continue
+            }
+            const { id, payload } = message as {
+              id?: string
+              payload?: Record<string, unknown>
+            }
+            if (id !== 'telemetry' || !payload) {
+              continue
+            }
+
+            const speedValue = payload.speed_kmh ?? payload.speedKmh ?? payload.speed
+            if (typeof speedValue === 'number' && Number.isFinite(speedValue)) {
+              setSpeed(speedValue)
+            }
+
+            const distanceValue = payload.distance_cm ?? payload.distanceCm ?? payload.distance
+            if (typeof distanceValue === 'number' && Number.isFinite(distanceValue)) {
+              if (distanceValue === 1000) {
+                setDistanceCm(null)
+              }else {
+                setDistanceCm(distanceValue)
+              }
+            }
+
+            const emergencyValue =
+              payload.emergency_stop_active ?? payload.emergencyStopActive ?? payload.emergency
+            if (typeof emergencyValue === 'boolean') {
+              setEmergencyStopActive(emergencyValue)
+            }
+          }
         }
 
         ws.onclose = (event) => {
@@ -71,11 +113,6 @@ export default function MainView() {
         const { x, y } = event
         console.log('Joystick move:', { x, y })
 
-        const now = Date.now()
-        // if (now - lastMoveSentAtRef.current < 300) {
-        //     return
-        // }
-
         const speed = Math.round(Math.round(y  * 100)/5)*5 // Convert to range -100 to 100
         const steering = Math.round(Math.round(x  * 100)/5)*5 // Convert to range -100 to 100
         if (speed === lastSpeed.current && steering === lastSteering.current) {
@@ -92,7 +129,6 @@ export default function MainView() {
         }
         if (socket && isConnected) {
             socket.send(JSON.stringify(jsonMessage))
-            lastMoveSentAtRef.current = now
             console.log('Joystick move message sent:', jsonMessage)
         } else {
             console.error('WebSocket is not connected')
@@ -209,10 +245,14 @@ export default function MainView() {
         </div>
       </div>
       
-      <div className="flex items-center">
+      <div className="flex flex-col items-center justify-center gap-4">
         <button className="p-4 bg-red-600 rounded-2xl text-white" onClick={() => toggleAutopilot()}>
           Mode
         </button>
+        <p>{autopilotEnabled.current ? "Autopilot" : "Manual"}</p>
+        <p>Geschwindigkeit: {speed.toFixed(2)} km/h</p>
+        <p>Distanz: {distanceCm === null ? "-" : `${distanceCm.toFixed(1)} cm`}</p>
+        <p>Notstopp: {emergencyStopActive ? "aktiv" : "aus"}</p>
       </div>
     </div>
   );
