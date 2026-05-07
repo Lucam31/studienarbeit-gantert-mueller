@@ -15,6 +15,12 @@ class MainApp(QObject):
         self.drivers = drivers.Drivers()
         self.controller = controller.Controller(self.drivers)
         self.emergency_stop_active = False
+        self.last_drive_y = 0.0
+        self.last_distance_cm = None
+        self.last_distance_ts = None
+        self.emergency_stop_min_distance_cm = 10.0
+        self.emergency_stop_forward_scale = 2.0
+        self.emergency_stop_distance_stale_s = 0.8
         self.vision_thread = None
         self.vision_worker = None
         
@@ -28,6 +34,7 @@ class MainApp(QObject):
         self.control_timer = QTimer(self)
         self.control_timer.timeout.connect(self.controller.update)
         self.control_timer.start(20)
+        self.break_time = 0
         timer = QTimer(self)
         timer.timeout.connect(self.emergency_stop)
         timer.start(500)  # Call emergency_stop every 500 ms
@@ -47,7 +54,7 @@ class MainApp(QObject):
             # - y controls throttle (forward/back)
             # - x controls steering (left/right)
             if "x" in payload and "y" in payload:
-                self.controller.drive_joystick(x=payload["x"], y=payload["y"])
+                self._drive_with_obstacle_guard(x=payload["x"], y=payload["y"])
                 return
             else:
                 print("Joystick command missing 'x' or 'y' in payload")
@@ -125,7 +132,60 @@ class MainApp(QObject):
 
     def on_vision_command(self, x: float, y: float) -> None:
         """Callback wenn Vision-Worker einen Steuerbefehl sendet"""
-        self.controller.drive_joystick(x=x, y=y)
+        self._drive_with_obstacle_guard(x=x, y=y)
+
+    @staticmethod
+    def _clamp(value: float, min_value: float, max_value: float) -> float:
+        if value < min_value:
+            return min_value
+        if value > max_value:
+            return max_value
+        return value
+
+    def _update_distance(self) -> float:
+        distance = self.controller.distanz()
+        self.last_distance_cm = distance
+        self.last_distance_ts = time.time()
+        return distance
+
+    def _get_distance_for_drive(self):
+        if self.last_distance_cm is None or self.last_distance_ts is None:
+            return self._update_distance()
+        if (time.time() - self.last_distance_ts) > self.emergency_stop_distance_stale_s:
+            return self._update_distance()
+        return self.last_distance_cm
+
+    def _drive_with_obstacle_guard(self, x: float, y: float) -> None:
+        self.last_drive_y = float(y)
+        if not self.emergency_stop_active:
+            self.controller.drive_joystick(x=x, y=y)
+            return
+
+        x = float(self._clamp(x, -100.0, 100.0))
+        y = float(self._clamp(y, -100.0, 100.0))
+
+        left = self._clamp(y + x, -100.0, 100.0)
+        right = self._clamp(y - x, -100.0, 100.0)
+
+        distance_cm = self._get_distance_for_drive()
+        if distance_cm is None:
+            left = min(left, 0.0)
+            right = min(right, 0.0)
+        elif distance_cm <= self.emergency_stop_min_distance_cm:
+            left = min(left, 0.0)
+            right = min(right, 0.0)
+        else:
+            forward_cap = max(
+                0.0,
+                (distance_cm - self.emergency_stop_min_distance_cm) * self.emergency_stop_forward_scale,
+            )
+            forward_cap = min(100.0, forward_cap)
+            if left > forward_cap:
+                left = forward_cap
+            if right > forward_cap:
+                right = forward_cap
+
+        self.controller.drive_tank(left_speed=left, right_speed=right)
 
     ## Callback function to handle close event (e.g., when Ctrl+C is pressed)
     # @param signal_received: The signal received (e.g., SIGINT)
@@ -144,22 +204,35 @@ class MainApp(QObject):
     ## Function to perform an emergency stop
     # @description: This function is called periodically by a timer to check if an emergency stop condition is met (e.g., if the calculated braking distance plus a safety margin is greater than the distance to an obstacle). If the condition is met, it stops the vehicle and activates the emergency stop state.
     def emergency_stop(self) -> None:
-        return
         print("Emergency stop check...")
-        print(self.controller.distanz())
-        return
-        speed = self.controller.get_current_speed()
-        break_distance = (speed/10) * (speed/10) * 0.5
-        # if car is sliding but wheels are not turning it thinks the car stopped
-        # maybe add a timer for minimum time to block user inputs
-        if self.emergency_stop_active and speed > 0: 
-            return
-        else:
-            self.emergency_stop_active = False
+        distance = self._update_distance()
+        speed = self.controller.get_current_speed() * 3.6
+        break_distance = (speed / 10) * (speed / 10) * 0.5
+        driving_backward = self.last_drive_y < 0
+
         # if break distance is greater than distance to obstacle + 20 cm, stop the car
-        if break_distance >= self.controller.get_distance_to_obstacle() + 20:
-            self.controller.stop()
+        print(f"Distance: {distance} cm, Speed: {speed} km/h, Break Distance: {break_distance} cm")
+
+        if distance <= self.emergency_stop_min_distance_cm:
             self.emergency_stop_active = True
+            if not driving_backward:
+                self.break_time = time.time()
+                self.controller.stop()
+                print("Emergency stop activated! Obstacle too close.")
+            return
+
+        if break_distance + 20 >= distance and not driving_backward:
+            self.break_time = time.time()
+            self.emergency_stop_active = True
+            self.controller.stop()
+            print("Emergency stop activated!")
+            return
+
+        if self.emergency_stop_active:
+            if speed == 0 and (time.time() - self.break_time) > 3:
+                print("Emergency stop active, car has stopped.")
+                self.emergency_stop_active = False
+            return
 
 
 if __name__ == "__main__":

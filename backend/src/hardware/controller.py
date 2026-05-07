@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from functools import partial
+import threading
 import hardware.drivers
 import time
 
@@ -16,6 +17,8 @@ class Controller:
         self._left_target = 0.0
         self._right_target = 0.0
         self._last_drive_ts = None
+        self._hall_sensor_timeout_s = 5.0
+        self._hall_sensor_timer = None
         
         # pull up for right hall sensor, pull down
         self.leftHallSensorPin = 23
@@ -41,6 +44,23 @@ class Controller:
 
         self.last_hall_sensor_time = time.time()
         self.wheel_circumference = 0.3927 # in meters
+        self._reset_hall_sensor_timer()
+
+    def _reset_hall_sensor_timer(self) -> None:
+        if self._hall_sensor_timer is not None:
+            self._hall_sensor_timer.cancel()
+        self._hall_sensor_timer = threading.Timer(
+            self._hall_sensor_timeout_s,
+            self._handle_hall_sensor_timeout,
+        )
+        self._hall_sensor_timer.daemon = True
+        self._hall_sensor_timer.start()
+
+    def _handle_hall_sensor_timeout(self) -> None:
+        # No hall sensor signal for the timeout window: assume stop.
+        print("Reset")
+        self.leftcurrent_speed = 0.0
+        self.rightcurrent_speed = 0.0
 
     def setup_pins(self):
         """ Setup hall sensor pin """
@@ -102,7 +122,7 @@ class Controller:
         while not self.drivers.read(self.echo):
             if time.perf_counter() - wait_start > echo_start_timeout:
                 print("Timeout: Kein Echo-Start erkannt")
-                return None
+                return 1000
 
         StartZeit = time.perf_counter()
         StopZeit = StartZeit
@@ -112,7 +132,7 @@ class Controller:
             StopZeit = time.perf_counter()
             if StopZeit - StartZeit > echo_pulse_timeout:
                 print("Timeout: Echo-Puls zu lang")
-                return None
+                return 1000
 
         # Zeit Differenz zwischen Start und Ankunft.
         TimeElapsed = StopZeit - StartZeit
@@ -131,6 +151,7 @@ class Controller:
             self.leftcurrent_speed = self.calc_speed(time_diff)
         else:
             self.rightcurrent_speed = self.calc_speed(time_diff)
+        self._reset_hall_sensor_timer()
 
     def calc_speed(self, time_diff):
         if time_diff >= 4:
@@ -144,7 +165,7 @@ class Controller:
 
     def get_current_speed(self):
         # if hall sensor has not been triggered for more than 4 seconds, assume the car has stopped
-        return 1000
+        return max(self.leftcurrent_speed, self.rightcurrent_speed)
         #return self.current_speed if (time.time() - self.last_hall_sensor_time) < 4.0 else 0.0
 
     @staticmethod
@@ -267,6 +288,10 @@ class Controller:
     """
         
     def stop(self):
+        if self._hall_sensor_timer is not None:
+            self._hall_sensor_timer.cancel()
+        self.leftcurrent_speed = 0.0
+        self.rightcurrent_speed = 0.0
         self.drivers.write(self.right1, False)
         self.drivers.write(self.right2, False)
         self.drivers.setup_pwm(self.rightpwm, frequency=1000, duty_cycle=0)
