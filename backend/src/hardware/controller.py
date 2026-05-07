@@ -23,6 +23,9 @@ class Controller:
         self._hall_last_trigger = {"left": 0.0, "right": 0.0}
         self._hall_last_speed_ts = {"left": 0.0, "right": 0.0}
         
+        # led pin
+        self.led = 21
+
         # pull up for right hall sensor, pull down
         self.leftHallSensorPin = 23
         self.rightHallSensorPin = 24
@@ -79,6 +82,8 @@ class Controller:
         self.drivers.add_event_detect(self.rightHallSensorPin, "falling", callback=partial(self.sensorCallback, "right"))
 
         self.drivers.initialize()
+
+        self.drivers.setup_output(self.led, initial=False)
 
         """ Setup motor driver pins. in1 and in2 control the direction of the motor, pwm controls the speed, and stby is used to enable/disable the motor driver. """
         # right motor
@@ -245,6 +250,7 @@ class Controller:
             left_speed: Signed speed in range [-100, 100]. Sign controls direction.
             right_speed: Signed speed in range [-100, 100]. Sign controls direction.
         """
+        print(f"Drive command received: left_speed={left_speed}, right_speed={right_speed}")
         self._left_target = float(self._clamp(left_speed, -100.0, 100.0))
         self._right_target = float(self._clamp(right_speed, -100.0, 100.0))
         self._apply_ramp()

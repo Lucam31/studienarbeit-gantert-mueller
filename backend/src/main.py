@@ -60,6 +60,7 @@ class MainApp(QObject):
             # - y controls throttle (forward/back)
             # - x controls steering (left/right)
             if "x" in payload and "y" in payload:
+                print(f"Received joystick command: x={payload['x']}, y={payload['y']}")
                 self._drive_with_obstacle_guard(x=payload["x"], y=payload["y"])
                 return
             else:
@@ -119,12 +120,14 @@ class MainApp(QObject):
         self.vision_thread.finished.connect(self._on_vision_thread_finished)
 
         self.vision_thread.start()
+        self.drivers.toggle(21)
         print("Vision worker thread started.")
 
     def stop_vision_worker(self) -> None:
+        self.drivers.toggle(21)
         if self.vision_worker is not None:
             self.vision_worker.stop_processing()
-
+        
         if self.vision_thread is not None and self.vision_thread.isRunning():
             self.vision_thread.quit()
             self.vision_thread.wait(3000)
@@ -138,6 +141,7 @@ class MainApp(QObject):
 
     def on_vision_command(self, x: float, y: float) -> None:
         """Callback wenn Vision-Worker einen Steuerbefehl sendet"""
+        print(f"[MAIN] Received vision command: x={x}, y={y}")
         self._drive_with_obstacle_guard(x=x, y=y)
 
     @staticmethod

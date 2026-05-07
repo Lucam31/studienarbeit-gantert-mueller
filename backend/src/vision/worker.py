@@ -14,6 +14,10 @@ class VisionWorker(QObject):
         self.rtsp_url = rtsp_url
         self.mjpeg_server = mjpeg_server  # MJPEGServer-Instanz
         self.process_interval_s = 0.2
+        self.last_error = 0.0
+        self.Kp = 0.15
+        self.Kd = 0.1
+        self.base_speed = 0.1  # 10%
 
     @Slot()
     def start_processing(self):
@@ -71,8 +75,22 @@ class VisionWorker(QObject):
 
             last_process_time = now
 
-            processed, x, y = self.process_frame(frame)
-            self.steeringCommand.emit(float(x), float(y))
+            processed, error, confidence = self.process_frame(frame)
+
+            if confidence > 0.0:
+                derivative = error - self.last_error
+                correction  = self.Kp * error + self.Kd * derivative
+                self.last_error = error
+                
+                # In Joystick-Format umrechnen
+                x = correction / 100.0   # Lenkung: -1.0 (links) bis 1.0 (rechts)
+                y = self.base_speed       # Vorwärtsgeschwindigkeit: fix z.B. 0.5
+            else:
+                x = 0.0
+                y = 0.0
+                self.last_error = 0.0
+
+            self.steeringCommand.emit(x*100, y*100)
 
             if self.mjpeg_server is not None:
                 try:
@@ -97,26 +115,33 @@ class VisionWorker(QObject):
         # Frame auf untere 50% beschränken
         height, width = frame.shape[:2]
         roi_frame = frame[height // 2:, :]
-
+        
         # in hsv konvertieren 
         # Farbton, Sättigung, Helligkeit
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
         
-        # Maske für orange Farbe erstellen
-        lower = np.array([2, 150, 50])   # viel großzügiger
-        upper = np.array([18, 255, 255])
+        # Maske fuer orange Farbe erstellen (hoehere Saettigung, damit weiss nicht triggert)
+        lower = np.array([0, 130, 60])
+        upper = np.array([30, 255, 255])
 
         mask = cv2.inRange(hsv, lower, upper)
-        # rauschen entfernen
-        kernel = np.ones((4, 4), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+                # Rauschen entfernen und kleine Luecken schliessen
+        kernel = np.ones((7, 7), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
+        
+        # Loecher in der Maske fuellen (z.B. durch Ueberbelichtung)
+        flood = mask.copy()
+        cv2.floodFill(flood, None, (0, 0), 255)
+        flood_inv = cv2.bitwise_not(flood)
+        mask = cv2.bitwise_or(mask, flood_inv)
+        
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
+        
         if contours:
             largest = max(contours, key=cv2.contourArea)
             
-            if cv2.contourArea(largest) > 500:
+            if cv2.contourArea(largest) > 100:
                 # Centroid für Steuerung
                 M = cv2.moments(largest)
                 cx = int(M["m10"] / M["m00"])
@@ -127,7 +152,8 @@ class VisionWorker(QObject):
                 # Kontur einzeichnen (auf roi_frame, nicht frame)
                 cv2.drawContours(roi_frame, [largest], -1, (0, 255, 0), 2)
                 cv2.circle(roi_frame, (cx, int(M["m01"] / M["m00"])), 5, (0, 0, 255), -1)
-                
+                return roi_frame, error / (width // 2) * 100, 10.0
+
         print("[VISION] Frame processed")
         return roi_frame, 0.0, 0.0
         
