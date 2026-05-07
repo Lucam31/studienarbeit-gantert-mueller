@@ -21,6 +21,9 @@ class MainApp(QObject):
         self.emergency_stop_min_distance_cm = 10.0
         self.emergency_stop_forward_scale = 2.0
         self.emergency_stop_distance_stale_s = 0.8
+        self.emergency_stop_brake_margin_cm = 40.0
+        self.emergency_stop_brake_scale = 1.5
+        self.emergency_stop_check_ms = 200
         self.vision_thread = None
         self.vision_worker = None
         
@@ -37,7 +40,7 @@ class MainApp(QObject):
         self.break_time = 0
         timer = QTimer(self)
         timer.timeout.connect(self.emergency_stop)
-        timer.start(500)  # Call emergency_stop every 500 ms
+        timer.start(self.emergency_stop_check_ms)  # Call emergency_stop periodically
 
     ## Callback function to handle messages received from the WebSocket server
     # @param msg_id: The ID of the message received from the client
@@ -207,7 +210,9 @@ class MainApp(QObject):
         print("Emergency stop check...")
         distance = self._update_distance()
         speed = self.controller.get_current_speed() * 3.6
-        break_distance = (speed / 10) * (speed / 10) * 0.5
+        break_distance = (
+            (speed / 10) * (speed / 10) * 0.5 * self.emergency_stop_brake_scale
+        )
         driving_backward = self.last_drive_y < 0
 
         # if break distance is greater than distance to obstacle + 20 cm, stop the car
@@ -221,7 +226,7 @@ class MainApp(QObject):
                 print("Emergency stop activated! Obstacle too close.")
             return
 
-        if break_distance + 20 >= distance and not driving_backward:
+        if break_distance + self.emergency_stop_brake_margin_cm >= distance and not driving_backward:
             self.break_time = time.time()
             self.emergency_stop_active = True
             self.controller.stop()

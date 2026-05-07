@@ -11,7 +11,7 @@ class Controller:
         self.leftcurrent_speed = 0.0
         self.rightcurrent_speed = 0.0
         self.last_set_speed = 0.0
-        self.max_speed_change_per_s = 120.0
+        self.max_speed_change_per_s = 200.0
         self._left_command = 0.0
         self._right_command = 0.0
         self._left_target = 0.0
