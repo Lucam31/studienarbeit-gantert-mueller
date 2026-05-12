@@ -26,6 +26,7 @@ class Logger:
         self.logger.debug(msg, *args, **kwargs)
 
     def info(self, msg: str, *args, **kwargs):
+        return
         self.logger.info(msg, *args, **kwargs)
 
     def warning(self, msg: str, *args, **kwargs):

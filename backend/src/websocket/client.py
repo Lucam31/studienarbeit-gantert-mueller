@@ -1,10 +1,10 @@
-
 import sys
 from time import sleep
 from PySide6.QtCore import QObject, QCoreApplication, QTimer, Signal, Slot, QUrl, QThread
 from threading import Thread
 from PySide6.QtWebSockets import QWebSocket 
 from PySide6.QtNetwork import QHostAddress, QAbstractSocket
+import json
 
 """
 TODO:
@@ -26,7 +26,8 @@ class Worker(QObject):
 
 class WebSocket(QObject):
     # SignalClientReceived = Signal(str)
-    SignalSendMessage = Signal(str)
+    SignalSendMessage = Signal(dict)
+    # def __init__(self, url="ws://192.168.3.200:50000", parent=None):
     def __init__(self, url="ws://127.0.0.1:50000", parent=None):
         super().__init__(parent)
         self.isConnected = False
@@ -81,10 +82,11 @@ class WebSocket(QObject):
         """Handle WebSocket errors"""
         print(f"WebSocket error: {self.websocket.errorString()}")
 
-    @Slot()
-    def __send_message(self, message: str):
-        """Send a message to the server"""
-        self.websocket.sendTextMessage(message)
+    @Slot(dict)
+    def __send_message(self, message: dict):
+        """Send a JSON message to the server"""
+        json_message = json.dumps(message)
+        self.websocket.sendTextMessage(json_message)
 
     def tryReconnect(self):
         """Attempt to reconnect to the server if disconnected"""
@@ -144,36 +146,26 @@ class WebSocket(QObject):
             print(f"{var.split(',')[0]}: {var.split(',')[-1]}")
         print("\n")
 
-        # send messages to the RTSI with this command
-        # self.SignalSendMessage.emit("set value <var1>:<val1>")
-
-        # you can also set multiple vars at once
-        # self.SignalSendMessage.emit("set value <var1>:<val1>;<var2>:<val2>;...")
-
-        # here is an example with an actual var
-        # self.SignalSendMessage.emit("set value sTest.bAllowCnt[0]:0;sTest.ulCnt[0]:0")
-
-        # adding and removing variables to the RTSI isn't implemented yet
-        # when it is implemented it will only be possible to add variables while the RTSI is disconnected
-        # to add/remove variables from the RTSI disconnect and add/remove them using the vars identifier
-        # self.SignalSendMessage.emit("add vars <var1>;<var2>;...") # also possible with only one var (add vars <var1>)
-
     def run(self):
         """
         This is the main loop of the RTSIClient Logic
-        It will run in an endless loop and in it's own thread
+        It will run in an endless loop and in its own thread
         It will stop when closeEvent() is triggered by pressing ctrl + c in the console
         """
-        # This Signal triggers the Connect Button in the RTSI Gui
-        # Sending it while it is already connected won't have any effect
-        # a disconnect message is also possible to stop the RTSI
-        self.SignalSendMessage.emit("connect")
         while not self.closeEventOccured:
-            # send messages via an emit of the signal so the send_message function gets executed in the main thread
-            self.SignalSendMessage.emit("set value sTest.bAllowCnt[0]:" + str(1 if self.val else 0))
-            self.val = not self.val
-            # this sleep value is just an example so the variable gets changed every 2 seconds
-            # you can adjust it to your needs
+            message = {
+                "id": "drive_command",
+                "payload": {
+                    "speed": 100,
+                    "steering": 0
+                }
+            }
+            self.SignalSendMessage.emit(message)
+            message2 = {
+                "id": "follow_line_command",
+                "payload": {}
+            }
+            self.SignalSendMessage.emit(message2)
             sleep(2)
 
 ####################################
